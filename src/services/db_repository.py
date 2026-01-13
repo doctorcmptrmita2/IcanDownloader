@@ -41,10 +41,23 @@ class ClickHouseRepository:
             )
         return self._client
     
+    def _ensure_database_exists(self) -> None:
+        """Create database if it doesn't exist using default database."""
+        # Connect to default database first
+        default_client = Client(
+            host=self.host,
+            port=self.port,
+            password=self.password,
+            database='default',
+        )
+        default_client.execute(f"CREATE DATABASE IF NOT EXISTS {self.database}")
+        default_client.disconnect()
+        logger.info(f"Database '{self.database}' ensured to exist")
+    
     def init_tables(self) -> None:
         """Create tables if they don't exist."""
-        # Create database if not exists
-        self.client.execute(f"CREATE DATABASE IF NOT EXISTS {self.database}")
+        # First ensure database exists
+        self._ensure_database_exists()
         
         # Zone records table
         self.client.execute("""

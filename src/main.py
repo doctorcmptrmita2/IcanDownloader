@@ -24,6 +24,7 @@ def create_services(config):
     Returns:
         Dictionary of service instances
     """
+    import time
     from src.services.db_repository import ClickHouseRepository
     from src.services.czds_client import CZDSClient
     from src.services.zone_parser import ZoneParser
@@ -31,18 +32,35 @@ def create_services(config):
     from src.services.download_service import DownloadService
     from src.services.scheduler_service import SchedulerService
     
-    # Create repository
+    # Create repository with retry
     logger.info(f"Connecting to ClickHouse at {config.db_host}:{config.db_port}")
-    repository = ClickHouseRepository(
-        host=config.db_host,
-        password=config.clickhouse_password,
-        database=config.db_name,
-        port=config.db_port,
-    )
     
-    # Initialize database tables
-    logger.info("Initializing database tables")
-    repository.init_tables()
+    max_retries = 30
+    retry_delay = 2
+    repository = None
+    
+    for attempt in range(max_retries):
+        try:
+            repository = ClickHouseRepository(
+                host=config.db_host,
+                password=config.clickhouse_password,
+                database=config.db_name,
+                port=config.db_port,
+            )
+            # Initialize database tables
+            logger.info("Initializing database tables")
+            repository.init_tables()
+            logger.info("ClickHouse connection successful")
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"ClickHouse not ready (attempt {attempt + 1}/{max_retries}): {e}")
+                time.sleep(retry_delay)
+            else:
+                raise
+    
+    if repository is None:
+        raise Exception("Failed to connect to ClickHouse after all retries")
     
     # Create CZDS client
     czds_client = CZDSClient(
