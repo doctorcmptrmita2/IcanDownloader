@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  icann-downloader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - ICANN_USER=${ICANN_USER}
+      - ICANN_PASS=${ICANN_PASS}
+      - DB_HOST=${DB_HOST:-clickhouse}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
