@@ -1,0 +1,294 @@
+"""ClickHouse Repository for database operations."""
+from datetime import datetime
+from typing import List, Optional, Generator
+import logging
+
+from clickhouse_driver import Client
+
+from src.models import ZoneRecord, DownloadLog
+
+
+logger = logging.getLogger(__name__)
+
+
+class ClickHouseRepository:
+    """Repository for ClickHouse database operations."""
+    
+    def __init__(self, host: str, password: str, database: str = "icann", port: int = 9000):
+        """Initialize connection to ClickHouse.
+        
+        Args:
+            host: ClickHouse server host
+            password: ClickHouse password
+            database: Database name
+            port: ClickHouse port
+        """
+        self.host = host
+        self.password = password
+        self.database = database
+        self.port = port
+        self._client: Optional[Client] = None
+    
+    @property
+    def client(self) -> Client:
+        """Get or create ClickHouse client."""
+        if self._client is None:
+            self._client = Client(
+                host=self.host,
+                port=self.port,
+                password=self.password,
+                database=self.database,
+            )
+        return self._client
+    
+    def init_tables(self) -> None:
+        """Create tables if they don't exist."""
+        # Create database if not exists
+        self.client.execute(f"CREATE DATABASE IF NOT EXISTS {self.database}")
+        
+        # Zone records table
+        self.client.execute("""
+            CREATE TABLE IF NOT EXISTS zone_records (
+                domain_name String,
+                tld String,
+                record_type String,
+                record_data String,
+                ttl UInt32,
+                download_date Date,
+                created_at DateTime DEFAULT now()
+            ) ENGINE = ReplacingMergeTree(created_at)
+            PARTITION BY toYYYYMM(download_date)
+            ORDER BY (tld, domain_name, record_type, download_date)
+            SETTINGS index_granularity = 8192
+        """)
+        
+        # Download logs table
+        self.client.execute("""
+            CREATE TABLE IF NOT EXISTS download_logs (
+                id UInt64,
+                tld String,
+                file_size UInt64,
+                records_count UInt64,
+                download_duration UInt32,
+                parse_duration UInt32,
+                status String,
+                error_message Nullable(String),
+                started_at DateTime,
+                completed_at DateTime
+            ) ENGINE = MergeTree()
+            ORDER BY (started_at, tld)
+            SETTINGS index_granularity = 8192
+        """)
+        
+        # System settings table
+        self.client.execute("""
+            CREATE TABLE IF NOT EXISTS system_settings (
+                key String,
+                value String,
+                updated_at DateTime DEFAULT now()
+            ) ENGINE = ReplacingMergeTree(updated_at)
+            ORDER BY key
+        """)
+        
+        # Create indexes
+        try:
+            self.client.execute("""
+                ALTER TABLE zone_records 
+                ADD INDEX IF NOT EXISTS idx_domain domain_name TYPE bloom_filter GRANULARITY 1
+            """)
+        except Exception:
+            pass  # Index might already exist
+            
+        try:
+            self.client.execute("""
+                ALTER TABLE zone_records 
+                ADD INDEX IF NOT EXISTS idx_tld tld TYPE set(100) GRANULARITY 1
+            """)
+        except Exception:
+            pass  # Index might already exist
+        
+        logger.info("Database tables initialized")
+    
+    def insert_zone_records(self, records: List[ZoneRecord], batch_size: int = 10000) -> int:
+        """Insert zone records in batches.
+        
+        Args:
+            records: List of ZoneRecord objects to insert
+            batch_size: Number of records per batch (default 10000)
+            
+        Returns:
+            Total number of records inserted
+        """
+        total_inserted = 0
+        
+        for batch in self._batch_records(records, batch_size):
+            data = [
+                (
+                    r.domain_name,
+                    r.tld,
+                    r.record_type,
+                    r.record_data,
+                    r.ttl,
+                    r.download_date,
+                )
+                for r in batch
+            ]
+            
+            self.client.execute(
+                """
+                INSERT INTO zone_records 
+                (domain_name, tld, record_type, record_data, ttl, download_date)
+                VALUES
+                """,
+                data,
+            )
+            total_inserted += len(batch)
+            
+        return total_inserted
+    
+    def _batch_records(
+        self, records: List[ZoneRecord], batch_size: int
+    ) -> Generator[List[ZoneRecord], None, None]:
+        """Split records into batches.
+        
+        Args:
+            records: List of records
+            batch_size: Size of each batch
+            
+        Yields:
+            Batches of records
+        """
+        for i in range(0, len(records), batch_size):
+            yield records[i:i + batch_size]
+    
+    def log_download(self, log: DownloadLog) -> None:
+        """Insert download log entry.
+        
+        Args:
+            log: DownloadLog object to insert
+        """
+        # Get next ID
+        result = self.client.execute("SELECT max(id) FROM download_logs")
+        next_id = (result[0][0] or 0) + 1
+        
+        self.client.execute(
+            """
+            INSERT INTO download_logs 
+            (id, tld, file_size, records_count, download_duration, parse_duration, 
+             status, error_message, started_at, completed_at)
+            VALUES
+            """,
+            [(
+                next_id,
+                log.tld,
+                log.file_size,
+                log.records_count,
+                log.download_duration,
+                log.parse_duration,
+                log.status,
+                log.error_message,
+                log.started_at,
+                log.completed_at,
+            )],
+        )
+    
+    def get_recent_logs(self, limit: int = 100) -> List[DownloadLog]:
+        """Fetch recent download logs.
+        
+        Args:
+            limit: Maximum number of logs to return
+            
+        Returns:
+            List of DownloadLog objects
+        """
+        result = self.client.execute(
+            """
+            SELECT id, tld, file_size, records_count, download_duration, 
+                   parse_duration, status, error_message, started_at, completed_at
+            FROM download_logs
+            ORDER BY started_at DESC
+            LIMIT %(limit)s
+            """,
+            {"limit": limit},
+        )
+        
+        return [
+            DownloadLog(
+                id=row[0],
+                tld=row[1],
+                file_size=row[2],
+                records_count=row[3],
+                download_duration=row[4],
+                parse_duration=row[5],
+                status=row[6],
+                error_message=row[7],
+                started_at=row[8],
+                completed_at=row[9],
+            )
+            for row in result
+        ]
+    
+    def get_setting(self, key: str) -> Optional[str]:
+        """Get system setting value.
+        
+        Args:
+            key: Setting key
+            
+        Returns:
+            Setting value or None if not found
+        """
+        result = self.client.execute(
+            """
+            SELECT value FROM system_settings 
+            WHERE key = %(key)s
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            {"key": key},
+        )
+        
+        return result[0][0] if result else None
+    
+    def set_setting(self, key: str, value: str) -> None:
+        """Set system setting value.
+        
+        Args:
+            key: Setting key
+            value: Setting value
+        """
+        self.client.execute(
+            """
+            INSERT INTO system_settings (key, value, updated_at)
+            VALUES
+            """,
+            [(key, value, datetime.now())],
+        )
+    
+    def get_total_records_count(self) -> int:
+        """Get total number of zone records.
+        
+        Returns:
+            Total record count
+        """
+        result = self.client.execute("SELECT count() FROM zone_records")
+        return result[0][0]
+    
+    def get_last_download_time(self) -> Optional[datetime]:
+        """Get the time of the last successful download.
+        
+        Returns:
+            Last download time or None
+        """
+        result = self.client.execute(
+            """
+            SELECT max(completed_at) FROM download_logs 
+            WHERE status = 'success'
+            """
+        )
+        return result[0][0] if result and result[0][0] else None
+    
+    def close(self) -> None:
+        """Close database connection."""
+        if self._client:
+            self._client.disconnect()
+            self._client = None
