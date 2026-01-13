@@ -63,10 +63,12 @@ def create_services(config):
         raise Exception("Failed to connect to ClickHouse after all retries")
     
     # Create CZDS client
+    from src.services.czds_client import RetryConfig
+    retry_config = RetryConfig(max_retries=config.max_retries)
     czds_client = CZDSClient(
         username=config.icann_user,
         password=config.icann_pass,
-        max_retries=config.max_retries,
+        retry_config=retry_config,
     )
     
     # Create logger service (socketio will be set later)
