@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Domain Zone Database - ICANN CZDS Explorer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: #1a1a24;
+            --border: #2a2a3a;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0b0;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+        }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+        
+        /* Header */
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            text-decoration: none;
+        }
+        
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent), #a855f7);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+        
+        .nav {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+        
+        .nav a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        
+        .nav a:hover { color: var(--text-primary); }
+        
+        .nav-btn {
+            background: var(--accent);
+            color: white !important;
+            padding: 10px 20px;
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+        
+        .nav-btn:hover { background: var(--accent-hover); }
+        
+        /* Hero Section */
+        .hero {
+            padding: 80px 24px;
+            text-align: center;
+            background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+        }
+        
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 700;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #fff 0%, #a0a0b0 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .hero p {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto 40px;
+        }
+        
+        /* Search Box */
+        .search-container {
+            max-width: 700px;
+            margin: 0 auto;
+        }
+        
+        .search-box {
+            display: flex;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+        
+        .search-box:focus-within {
+            border-color: var(--accent);
+        }
+        
+        .search-input {
+            flex: 1;
+            padding: 18px 24px;
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            font-size: 1.1rem;
+            outline: none;
+        }
+        
+        .search-input::placeholder {
+            color: var(--text-secondary);
+        }
+        
+        .search-btn {
+            padding: 18px 32px;
+            background: var(--accent);
+            border: none;
+            color: white;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .search-btn:hover { background: var(--accent-hover); }
+        
+        /* Stats Section */
+        .stats {
+            padding: 60px 24px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 24px;
+        }
+        
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 28px;
+            text-align: center;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-4px);
+            border-color: var(--accent);
+        }
+        
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+        
+        .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+        
+        /* TLD Grid */
+        .tld-section {
+            padding: 60px 24px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+        }
+        
+        .section-title {
+            font-size: 1.75rem;
+            font-weight: 600;
+        }
+        
+        .view-all {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .view-all:hover { text-decoration: underline; }
+        
+        .tld-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 16px;
+        }
+        
+        .tld-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+        
+        .tld-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+        
+        .tld-name {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--accent);
+            margin-bottom: 8px;
+        }
+        
+        .tld-count {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+        
+        /* Recent Activity */
+        .activity-section {
+            padding: 60px 24px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .activity-table {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        
+        .activity-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .activity-table th,
+        .activity-table td {
+            padding: 16px 20px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .activity-table th {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .activity-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .activity-table tr:hover td {
+            background: rgba(99, 102, 241, 0.05);
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+        
+        .status-success {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--success);
+        }
+        
+        .status-failed {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--danger);
+        }
+        
+        /* Footer */
+        .footer {
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            padding: 40px 24px;
+            margin-top: 60px;
+        }
+        
+        .footer-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .footer-text {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+        
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+        
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 12px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 2rem; }
+            .nav { gap: 16px; }
+            .search-box { flex-direction: column; }
+            .search-btn { padding: 16px; }
+            .footer-content { flex-direction: column; gap: 16px; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-content">
+            <a href="/" class="logo">
+                <div class="logo-icon">🌐</div>
+                <span>DomainZone</span>
+            </a>
+            <nav class="nav">
+                <a href="/browse">Browse Domains</a>
+                <a href="/admin">Admin Panel</a>
+            </nav>
+        </div>
+    </header>
+    
+    <section class="hero">
+        <h1>DNS Zone Database Explorer</h1>
+        <p>Search and explore millions of domain records from ICANN CZDS zone files. Updated daily with the latest DNS data.</p>
+        
+        <div class="search-container">
+            <form class="search-box" id="searchForm" action="/browse">
+                <input type="text" name="q" class="search-input" placeholder="Search domains (e.g., example, google, amazon...)" autocomplete="off">
+                <button type="submit" class="search-btn">Search</button>
+            </form>
+        </div>
+    </section>
+    
+    <section class="stats">
+        <div class="stats-grid" id="statsGrid">
+            <div class="stat-card">
+                <div class="stat-value" id="totalRecords">-</div>
+                <div class="stat-label">Total DNS Records</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="uniqueDomains">-</div>
+                <div class="stat-label">Unique Domains</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="tldCount">-</div>
+                <div class="stat-label">TLDs Indexed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="lastUpdate">-</div>
+                <div class="stat-label">Last Updated</div>
+            </div>
+        </div>
+    </section>
+    
+    <section class="tld-section">
+        <div class="section-header">
+            <h2 class="section-title">Available TLDs</h2>
+            <a href="/browse" class="view-all">View All →</a>
+        </div>
+        <div class="tld-grid" id="tldGrid">
+            <div class="loading">
+                <div class="spinner"></div>
+                Loading TLDs...
+            </div>
+        </div>
+    </section>
+    
+    <section class="activity-section">
+        <div class="section-header">
+            <h2 class="section-title">Recent Downloads</h2>
+        </div>
+        <div class="activity-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>TLD</th>
+                        <th>Records</th>
+                        <th>File Size</th>
+                        <th>Duration</th>
+                        <th>Status</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody id="activityBody">
+                    <tr>
+                        <td colspan="6" class="loading">
+                            <div class="spinner"></div>
+                            Loading activity...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+    
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-text">
+                © 2026 DomainZone - ICANN CZDS Zone File Explorer
+            </div>
+            <div class="footer-text">
+                Data sourced from ICANN Centralized Zone Data Service
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Format numbers
+        function formatNumber(num) {
+            if (num >= 1000000000) return (num / 1000000000).toFixed(1) + 'B';
+            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+            return num.toString();
+        }
+        
+        // Format bytes
+        function formatBytes(bytes) {
+            if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+            if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+            if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return bytes + ' B';
+        }
+        
+        // Format date
+        function formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+        
+        // Format time ago
+        function timeAgo(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr);
+            const now = new Date();
+            const diff = Math.floor((now - date) / 1000);
+            
+            if (diff < 60) return 'Just now';
+            if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+            if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+            return Math.floor(diff / 86400) + 'd ago';
+        }
+        
+        // Load stats
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                
+                document.getElementById('totalRecords').textContent = formatNumber(data.total_records || 0);
+                document.getElementById('uniqueDomains').textContent = formatNumber(data.unique_domains || 0);
+                document.getElementById('tldCount').textContent = data.tld_count || 0;
+                document.getElementById('lastUpdate').textContent = data.last_update ? formatDate(data.last_update) : 'Never';
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+        
+        // Load TLDs
+        async function loadTLDs() {
+            try {
+                const response = await fetch('/api/tlds');
+                const data = await response.json();
+                
+                const grid = document.getElementById('tldGrid');
+                
+                if (!data.tlds || data.tlds.length === 0) {
+                    grid.innerHTML = '<div class="loading">No TLDs available yet</div>';
+                    return;
+                }
+                
+                // Show top 20 TLDs
+                const topTLDs = data.tlds.slice(0, 20);
+                
+                grid.innerHTML = topTLDs.map(tld => `
+                    <a href="/browse?tld=${tld.tld}" class="tld-card">
+                        <div class="tld-name">.${tld.tld}</div>
+                        <div class="tld-count">${formatNumber(tld.unique_domains)} domains</div>
+                    </a>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load TLDs:', error);
+                document.getElementById('tldGrid').innerHTML = '<div class="loading">Failed to load TLDs</div>';
+            }
+        }
+        
+        // Load recent activity
+        async function loadActivity() {
+            try {
+                const response = await fetch('/api/download-logs?limit=10');
+                const data = await response.json();
+                
+                const tbody = document.getElementById('activityBody');
+                
+                if (!data.logs || data.logs.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="loading">No download history yet</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = data.logs.map(log => `
+                    <tr>
+                        <td><strong>.${log.tld}</strong></td>
+                        <td>${formatNumber(log.records_count)}</td>
+                        <td>${formatBytes(log.file_size)}</td>
+                        <td>${log.download_duration + log.parse_duration}s</td>
+                        <td>
+                            <span class="status-badge ${log.status === 'success' ? 'status-success' : 'status-failed'}">
+                                ${log.status}
+                            </span>
+                        </td>
+                        <td>${timeAgo(log.completed_at)}</td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load activity:', error);
+                document.getElementById('activityBody').innerHTML = '<tr><td colspan="6" class="loading">Failed to load activity</td></tr>';
+            }
+        }
+        
+        // Initialize
+        loadStats();
+        loadTLDs();
+        loadActivity();
+        
+        // Refresh every 30 seconds
+        setInterval(() => {
+            loadStats();
+            loadActivity();
+        }, 30000);
+    </script>
+</body>
+</html>

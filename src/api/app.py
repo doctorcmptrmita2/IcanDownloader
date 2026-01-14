@@ -68,6 +68,11 @@ def create_app(
     
     # Routes
     @app.route('/')
+    def index():
+        """Render landing page."""
+        return render_template('index.html')
+    
+    @app.route('/dashboard')
     def dashboard():
         """Render dashboard page with current status."""
         return render_template('dashboard.html')
@@ -231,6 +236,91 @@ def create_app(
     def health_check():
         """Health check endpoint."""
         return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
+    
+    @app.route('/api/stats')
+    def get_stats():
+        """Get dashboard statistics."""
+        if not app.repository:
+            return jsonify({"error": "Repository not available"}), 503
+        
+        try:
+            stats = app.repository.get_dashboard_stats()
+            return jsonify(stats)
+        except Exception as e:
+            logger.error(f"Failed to get stats: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/api/tlds')
+    def get_tlds():
+        """Get TLD statistics."""
+        if not app.repository:
+            return jsonify({"error": "Repository not available"}), 503
+        
+        try:
+            tlds = app.repository.get_tld_stats()
+            return jsonify({"tlds": tlds, "count": len(tlds)})
+        except Exception as e:
+            logger.error(f"Failed to get TLD stats: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/api/search')
+    def search_domains():
+        """Search domains."""
+        if not app.repository:
+            return jsonify({"error": "Repository not available"}), 503
+        
+        query = request.args.get('q', '')
+        tld = request.args.get('tld', None)
+        record_type = request.args.get('type', None)
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 50, type=int), 100)
+        
+        if not query or len(query) < 2:
+            return jsonify({"error": "Query must be at least 2 characters"}), 400
+        
+        try:
+            offset = (page - 1) * per_page
+            domains, total = app.repository.search_domains(
+                query=query,
+                tld=tld,
+                record_type=record_type,
+                limit=per_page,
+                offset=offset
+            )
+            
+            return jsonify({
+                "domains": domains,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "pages": (total + per_page - 1) // per_page
+            })
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/api/available-tlds')
+    def get_available_tlds():
+        """Get list of available TLDs."""
+        if not app.repository:
+            return jsonify({"error": "Repository not available"}), 503
+        
+        try:
+            tlds = app.repository.get_available_tlds()
+            return jsonify({"tlds": tlds})
+        except Exception as e:
+            logger.error(f"Failed to get available TLDs: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/browse')
+    def browse_page():
+        """Render domain browser page."""
+        return render_template('browse.html')
+    
+    @app.route('/admin')
+    def admin_page():
+        """Render admin dashboard page."""
+        return render_template('dashboard.html')
     
     # SocketIO Events
     @socketio.on('connect')

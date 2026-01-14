@@ -305,3 +305,167 @@ class ClickHouseRepository:
         if self._client:
             self._client.disconnect()
             self._client = None
+    
+    def search_domains(
+        self, 
+        query: str, 
+        tld: Optional[str] = None,
+        record_type: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> tuple:
+        """Search domains by name pattern.
+        
+        Args:
+            query: Domain name search pattern (supports % wildcard)
+            tld: Filter by TLD (optional)
+            record_type: Filter by record type (optional)
+            limit: Maximum results
+            offset: Pagination offset
+            
+        Returns:
+            Tuple of (results list, total count)
+        """
+        conditions = ["domain_name LIKE %(query)s"]
+        params = {"query": f"%{query}%", "limit": limit, "offset": offset}
+        
+        if tld:
+            conditions.append("tld = %(tld)s")
+            params["tld"] = tld
+        
+        if record_type:
+            conditions.append("record_type = %(record_type)s")
+            params["record_type"] = record_type
+        
+        where_clause = " AND ".join(conditions)
+        
+        # Get total count
+        count_result = self.client.execute(
+            f"SELECT count() FROM zone_records WHERE {where_clause}",
+            params
+        )
+        total = count_result[0][0]
+        
+        # Get results
+        result = self.client.execute(
+            f"""
+            SELECT domain_name, tld, record_type, record_data, ttl, download_date
+            FROM zone_records
+            WHERE {where_clause}
+            ORDER BY domain_name
+            LIMIT %(limit)s OFFSET %(offset)s
+            """,
+            params
+        )
+        
+        domains = [
+            {
+                "domain_name": row[0],
+                "tld": row[1],
+                "record_type": row[2],
+                "record_data": row[3],
+                "ttl": row[4],
+                "download_date": row[5].isoformat() if row[5] else None,
+            }
+            for row in result
+        ]
+        
+        return domains, total
+    
+    def get_tld_stats(self) -> List[dict]:
+        """Get statistics per TLD.
+        
+        Returns:
+            List of TLD statistics
+        """
+        result = self.client.execute("""
+            SELECT 
+                tld,
+                count() as record_count,
+                countDistinct(domain_name) as unique_domains,
+                max(download_date) as last_updated
+            FROM zone_records
+            GROUP BY tld
+            ORDER BY record_count DESC
+        """)
+        
+        return [
+            {
+                "tld": row[0],
+                "record_count": row[1],
+                "unique_domains": row[2],
+                "last_updated": row[3].isoformat() if row[3] else None,
+            }
+            for row in result
+        ]
+    
+    def get_record_type_stats(self) -> List[dict]:
+        """Get statistics per record type.
+        
+        Returns:
+            List of record type statistics
+        """
+        result = self.client.execute("""
+            SELECT 
+                record_type,
+                count() as count
+            FROM zone_records
+            GROUP BY record_type
+            ORDER BY count DESC
+        """)
+        
+        return [{"type": row[0], "count": row[1]} for row in result]
+    
+    def get_dashboard_stats(self) -> dict:
+        """Get overall dashboard statistics.
+        
+        Returns:
+            Dictionary with dashboard stats
+        """
+        # Total records
+        total_records = self.client.execute("SELECT count() FROM zone_records")[0][0]
+        
+        # Unique domains
+        unique_domains = self.client.execute(
+            "SELECT countDistinct(domain_name) FROM zone_records"
+        )[0][0]
+        
+        # TLD count
+        tld_count = self.client.execute(
+            "SELECT countDistinct(tld) FROM zone_records"
+        )[0][0]
+        
+        # Last update
+        last_update = self.client.execute(
+            "SELECT max(download_date) FROM zone_records"
+        )[0][0]
+        
+        # Successful downloads
+        success_count = self.client.execute(
+            "SELECT count() FROM download_logs WHERE status = 'success'"
+        )[0][0]
+        
+        # Failed downloads
+        failed_count = self.client.execute(
+            "SELECT count() FROM download_logs WHERE status = 'failed'"
+        )[0][0]
+        
+        return {
+            "total_records": total_records,
+            "unique_domains": unique_domains,
+            "tld_count": tld_count,
+            "last_update": last_update.isoformat() if last_update else None,
+            "successful_downloads": success_count,
+            "failed_downloads": failed_count,
+        }
+    
+    def get_available_tlds(self) -> List[str]:
+        """Get list of available TLDs in database.
+        
+        Returns:
+            List of TLD names
+        """
+        result = self.client.execute(
+            "SELECT DISTINCT tld FROM zone_records ORDER BY tld"
+        )
+        return [row[0] for row in result]
