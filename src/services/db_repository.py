@@ -46,10 +46,9 @@ class ClickHouseRepository:
             port=self.port,
             password=self.password,
             database=self.database,
-            settings={
-                'connect_timeout': 30,
-                'send_receive_timeout': 300,
-            },
+            connect_timeout=30,
+            send_receive_timeout=300,
+            sync_request_timeout=300,
         )
     
     def _get_read_client(self) -> Client:
