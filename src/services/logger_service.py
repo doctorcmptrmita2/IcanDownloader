@@ -135,7 +135,7 @@ class LoggerService:
         """
         return self.log(
             level="INFO",
-            message=f"Starting download for {tld}",
+            message=f"⬇️ [{tld}] İndirme başladı",
             operation_type="download",
             tld=tld,
             status="in_progress",
@@ -152,9 +152,14 @@ class LoggerService:
             Created LogEntry
         """
         if result.is_success:
+            # Calculate speed in Mbps
+            size_mb = result.file_size / (1024 * 1024)
+            duration = max(result.download_duration, 1)
+            speed_mbps = (result.file_size * 8) / (duration * 1000000)
+            
             return self.log(
                 level="INFO",
-                message=f"Download complete for {tld}: {result.file_size} bytes in {result.download_duration}s",
+                message=f"✅ [{tld}] İndirme tamamlandı: {size_mb:.1f} MB | {duration}s | {speed_mbps:.1f} Mbps",
                 operation_type="download",
                 tld=tld,
                 duration=result.download_duration,
@@ -164,7 +169,7 @@ class LoggerService:
         else:
             return self.log(
                 level="ERROR",
-                message=f"Download failed for {tld}: {result.error_message}",
+                message=f"❌ [{tld}] İndirme başarısız: {result.error_message}",
                 operation_type="download",
                 tld=tld,
                 duration=result.download_duration,
@@ -183,7 +188,7 @@ class LoggerService:
         """
         return self.log(
             level="INFO",
-            message=f"Starting parse for {tld}",
+            message=f"📄 [{tld}] Parse başladı",
             operation_type="parse",
             tld=tld,
             status="in_progress",
@@ -201,7 +206,7 @@ class LoggerService:
         """
         return self.log(
             level="DEBUG",
-            message=f"Parsing {tld}: {records_processed} records processed",
+            message=f"🔄 [{tld}] Parse devam ediyor: {records_processed:,} kayıt",
             operation_type="parse",
             tld=tld,
             status="in_progress",
@@ -229,7 +234,7 @@ class LoggerService:
         if error_message:
             return self.log(
                 level="ERROR",
-                message=f"Parse failed for {tld}: {error_message}",
+                message=f"❌ [{tld}] Parse başarısız: {error_message}",
                 operation_type="parse",
                 tld=tld,
                 duration=duration,
@@ -238,9 +243,10 @@ class LoggerService:
                 error_message=error_message,
             )
         else:
+            rate = records_count / max(duration, 1)
             return self.log(
                 level="INFO",
-                message=f"Parse complete for {tld}: {records_count} records in {duration}s",
+                message=f"✅ [{tld}] Parse tamamlandı: {records_count:,} kayıt | {duration}s | {rate:,.0f} kayıt/s",
                 operation_type="parse",
                 tld=tld,
                 duration=duration,

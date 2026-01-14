@@ -131,7 +131,7 @@ class DownloadService:
             
             self.logger_service.log(
                 "INFO",
-                f"Starting download for {len(tlds)} TLDs",
+                f"🚀 {len(tlds)} TLD için indirme başlıyor",
                 operation_type="download",
             )
             
@@ -172,7 +172,7 @@ class DownloadService:
             
             self.logger_service.log(
                 "INFO",
-                f"Download complete: {successful}/{len(tlds)} TLDs, {total_records} records in {duration}s",
+                f"🎉 Tüm indirmeler tamamlandı: {successful}/{len(tlds)} TLD başarılı | {total_records:,} kayıt | {duration}s",
                 operation_type="download",
                 status="success",
                 duration=duration,
@@ -343,7 +343,7 @@ class DownloadService:
         self.logger_service.log_parse_start(tld)
         self.logger_service.log(
             "INFO",
-            f"Using chunked processing for large file: {result.file_size / 1024 / 1024:.1f}MB",
+            f"🚀 [{tld}] Büyük dosya modu: {result.file_size / 1024 / 1024:.1f} MB | Chunk: {self.chunk_size:,} kayıt",
             operation_type="parse",
             tld=tld,
         )
@@ -392,11 +392,16 @@ class DownloadService:
             total_records += chunk_records
             chunks_processed += 1
             
-            # Log progress (less verbose)
+            # Log progress every 20 chunks (less verbose)
             if chunks_processed % 20 == 0:
+                elapsed = time.time() - parse_start
+                rate = total_records / elapsed if elapsed > 0 else 0
+                eta_seconds = int((parser.estimate_file_records(result.file_path) - total_records) / rate) if rate > 0 else 0
+                eta_min = eta_seconds // 60
+                eta_sec = eta_seconds % 60
                 self.logger_service.log(
                     "DEBUG",
-                    f"Chunk {chunk_number}: {chunk_records} records (total: {total_records})",
+                    f"🔄 [{tld}] Chunk {chunk_number}: {total_records:,} kayıt | {elapsed:.0f}s | {rate:,.0f} rec/s | ETA: {eta_min}m {eta_sec}s",
                     operation_type="parse",
                     tld=tld,
                 )
@@ -407,7 +412,7 @@ class DownloadService:
                 rate = total_records / elapsed if elapsed > 0 else 0
                 self.logger_service.log(
                     "INFO",
-                    f"Progress: {total_records:,} records in {elapsed:.0f}s ({rate:.0f} rec/s)",
+                    f"📊 [{tld}] İlerleme: {total_records:,} kayıt | {elapsed:.0f}s | {rate:,.0f} kayıt/s",
                     operation_type="parse",
                     tld=tld,
                 )
@@ -428,7 +433,7 @@ class DownloadService:
         self.logger_service.log_parse_complete(tld, total_records, parse_duration)
         self.logger_service.log(
             "INFO",
-            f"Large file processing complete: {chunks_processed} chunks, {total_records:,} records",
+            f"🎉 [{tld}] Büyük dosya tamamlandı: {chunks_processed} chunk | {total_records:,} kayıt | {parse_duration}s",
             operation_type="parse",
             tld=tld,
         )
