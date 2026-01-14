@@ -312,6 +312,128 @@ def create_app(
             logger.error(f"Failed to get available TLDs: {e}")
             return jsonify({"error": str(e)}), 500
     
+    @app.route('/api/available-dates')
+    def get_available_dates():
+        """Get list of available download dates."""
+        if not app.repository:
+            return jsonify({"error": "Repository not available"}), 503
+        
+        tld = request.args.get('tld', None)
+        
+        try:
+            dates = app.repository.get_available_dates(tld)
+            return jsonify({"dates": dates})
+        except Exception as e:
+            logger.error(f"Failed to get available dates: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/api/dropped-domains')
+    def get_dropped_domains():
+        """Get domains that were dropped between two dates."""
+        if not app.repository:
+            return jsonify({"error": "Repository not available"}), 503
+        
+        tld = request.args.get('tld')
+        old_date = request.args.get('old_date')
+        new_date = request.args.get('new_date')
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 100, type=int), 1000)
+        
+        if not all([tld, old_date, new_date]):
+            return jsonify({"error": "tld, old_date, and new_date are required"}), 400
+        
+        try:
+            offset = (page - 1) * per_page
+            domains, total = app.repository.get_dropped_domains(
+                tld=tld,
+                old_date=old_date,
+                new_date=new_date,
+                limit=per_page,
+                offset=offset
+            )
+            
+            return jsonify({
+                "domains": domains,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "pages": (total + per_page - 1) // per_page if total > 0 else 0,
+                "tld": tld,
+                "old_date": old_date,
+                "new_date": new_date,
+            })
+        except Exception as e:
+            logger.error(f"Failed to get dropped domains: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/api/new-domains')
+    def get_new_domains():
+        """Get domains that were newly registered between two dates."""
+        if not app.repository:
+            return jsonify({"error": "Repository not available"}), 503
+        
+        tld = request.args.get('tld')
+        old_date = request.args.get('old_date')
+        new_date = request.args.get('new_date')
+        page = request.args.get('page', 1, type=int)
+        per_page = min(request.args.get('per_page', 100, type=int), 1000)
+        
+        if not all([tld, old_date, new_date]):
+            return jsonify({"error": "tld, old_date, and new_date are required"}), 400
+        
+        try:
+            offset = (page - 1) * per_page
+            domains, total = app.repository.get_new_domains(
+                tld=tld,
+                old_date=old_date,
+                new_date=new_date,
+                limit=per_page,
+                offset=offset
+            )
+            
+            return jsonify({
+                "domains": domains,
+                "total": total,
+                "page": page,
+                "per_page": per_page,
+                "pages": (total + per_page - 1) // per_page if total > 0 else 0,
+                "tld": tld,
+                "old_date": old_date,
+                "new_date": new_date,
+            })
+        except Exception as e:
+            logger.error(f"Failed to get new domains: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/api/domain-changes')
+    def get_domain_changes():
+        """Get summary of domain changes between two dates."""
+        if not app.repository:
+            return jsonify({"error": "Repository not available"}), 503
+        
+        tld = request.args.get('tld')
+        old_date = request.args.get('old_date')
+        new_date = request.args.get('new_date')
+        
+        if not all([tld, old_date, new_date]):
+            return jsonify({"error": "tld, old_date, and new_date are required"}), 400
+        
+        try:
+            summary = app.repository.get_domain_changes_summary(
+                tld=tld,
+                old_date=old_date,
+                new_date=new_date
+            )
+            return jsonify(summary)
+        except Exception as e:
+            logger.error(f"Failed to get domain changes: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    @app.route('/dropped')
+    def dropped_page():
+        """Render dropped domains page."""
+        return render_template('dropped.html')
+    
     @app.route('/browse')
     def browse_page():
         """Render domain browser page."""

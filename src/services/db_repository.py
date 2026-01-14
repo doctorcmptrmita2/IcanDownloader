@@ -616,3 +616,266 @@ class ClickHouseRepository:
                 logger.error(f"Failed to delete old records: {e}")
                 self._reconnect_insert()
                 raise
+
+    def get_available_dates(self, tld: Optional[str] = None) -> List[str]:
+        """Get list of available download dates.
+        
+        Args:
+            tld: Optional TLD filter
+            
+        Returns:
+            List of dates in ISO format
+        """
+        client = self._get_read_client()
+        try:
+            if tld:
+                result = client.execute(
+                    """
+                    SELECT DISTINCT download_date 
+                    FROM zone_records 
+                    WHERE tld = %(tld)s
+                    ORDER BY download_date DESC
+                    LIMIT 30
+                    """,
+                    {"tld": tld}
+                )
+            else:
+                result = client.execute(
+                    """
+                    SELECT DISTINCT download_date 
+                    FROM zone_records 
+                    ORDER BY download_date DESC
+                    LIMIT 30
+                    """
+                )
+            return [row[0].isoformat() for row in result]
+        except Exception as e:
+            logger.warning(f"Failed to get available dates: {e}")
+            return []
+        finally:
+            client.disconnect()
+    
+    def get_dropped_domains(
+        self,
+        tld: str,
+        old_date: str,
+        new_date: str,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple:
+        """Get domains that existed on old_date but not on new_date (dropped).
+        
+        Args:
+            tld: TLD to check
+            old_date: Earlier date (YYYY-MM-DD)
+            new_date: Later date (YYYY-MM-DD)
+            limit: Max results
+            offset: Pagination offset
+            
+        Returns:
+            Tuple of (list of dropped domains, total count)
+        """
+        client = self._get_read_client()
+        try:
+            # Count total dropped
+            count_result = client.execute(
+                """
+                SELECT count(DISTINCT domain_name)
+                FROM zone_records
+                WHERE tld = %(tld)s
+                  AND download_date = %(old_date)s
+                  AND domain_name NOT IN (
+                      SELECT DISTINCT domain_name
+                      FROM zone_records
+                      WHERE tld = %(tld)s
+                        AND download_date = %(new_date)s
+                  )
+                """,
+                {"tld": tld, "old_date": old_date, "new_date": new_date}
+            )
+            total = count_result[0][0] if count_result else 0
+            
+            # Get dropped domains
+            result = client.execute(
+                """
+                SELECT DISTINCT domain_name
+                FROM zone_records
+                WHERE tld = %(tld)s
+                  AND download_date = %(old_date)s
+                  AND domain_name NOT IN (
+                      SELECT DISTINCT domain_name
+                      FROM zone_records
+                      WHERE tld = %(tld)s
+                        AND download_date = %(new_date)s
+                  )
+                ORDER BY domain_name
+                LIMIT %(limit)s OFFSET %(offset)s
+                """,
+                {"tld": tld, "old_date": old_date, "new_date": new_date, "limit": limit, "offset": offset}
+            )
+            
+            domains = [row[0] for row in result]
+            return domains, total
+            
+        except Exception as e:
+            logger.error(f"Failed to get dropped domains: {e}")
+            return [], 0
+        finally:
+            client.disconnect()
+    
+    def get_new_domains(
+        self,
+        tld: str,
+        old_date: str,
+        new_date: str,
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> tuple:
+        """Get domains that exist on new_date but not on old_date (newly registered).
+        
+        Args:
+            tld: TLD to check
+            old_date: Earlier date (YYYY-MM-DD)
+            new_date: Later date (YYYY-MM-DD)
+            limit: Max results
+            offset: Pagination offset
+            
+        Returns:
+            Tuple of (list of new domains, total count)
+        """
+        client = self._get_read_client()
+        try:
+            # Count total new
+            count_result = client.execute(
+                """
+                SELECT count(DISTINCT domain_name)
+                FROM zone_records
+                WHERE tld = %(tld)s
+                  AND download_date = %(new_date)s
+                  AND domain_name NOT IN (
+                      SELECT DISTINCT domain_name
+                      FROM zone_records
+                      WHERE tld = %(tld)s
+                        AND download_date = %(old_date)s
+                  )
+                """,
+                {"tld": tld, "old_date": old_date, "new_date": new_date}
+            )
+            total = count_result[0][0] if count_result else 0
+            
+            # Get new domains
+            result = client.execute(
+                """
+                SELECT DISTINCT domain_name
+                FROM zone_records
+                WHERE tld = %(tld)s
+                  AND download_date = %(new_date)s
+                  AND domain_name NOT IN (
+                      SELECT DISTINCT domain_name
+                      FROM zone_records
+                      WHERE tld = %(tld)s
+                        AND download_date = %(old_date)s
+                  )
+                ORDER BY domain_name
+                LIMIT %(limit)s OFFSET %(offset)s
+                """,
+                {"tld": tld, "old_date": old_date, "new_date": new_date, "limit": limit, "offset": offset}
+            )
+            
+            domains = [row[0] for row in result]
+            return domains, total
+            
+        except Exception as e:
+            logger.error(f"Failed to get new domains: {e}")
+            return [], 0
+        finally:
+            client.disconnect()
+    
+    def get_domain_changes_summary(self, tld: str, old_date: str, new_date: str) -> dict:
+        """Get summary of domain changes between two dates.
+        
+        Args:
+            tld: TLD to check
+            old_date: Earlier date
+            new_date: Later date
+            
+        Returns:
+            Summary dict with counts
+        """
+        client = self._get_read_client()
+        try:
+            # Count on old date
+            old_count = client.execute(
+                """
+                SELECT countDistinct(domain_name)
+                FROM zone_records
+                WHERE tld = %(tld)s AND download_date = %(date)s
+                """,
+                {"tld": tld, "date": old_date}
+            )[0][0]
+            
+            # Count on new date
+            new_count = client.execute(
+                """
+                SELECT countDistinct(domain_name)
+                FROM zone_records
+                WHERE tld = %(tld)s AND download_date = %(date)s
+                """,
+                {"tld": tld, "date": new_date}
+            )[0][0]
+            
+            # Count dropped
+            dropped_count = client.execute(
+                """
+                SELECT count(DISTINCT domain_name)
+                FROM zone_records
+                WHERE tld = %(tld)s
+                  AND download_date = %(old_date)s
+                  AND domain_name NOT IN (
+                      SELECT DISTINCT domain_name
+                      FROM zone_records
+                      WHERE tld = %(tld)s
+                        AND download_date = %(new_date)s
+                  )
+                """,
+                {"tld": tld, "old_date": old_date, "new_date": new_date}
+            )[0][0]
+            
+            # Count new
+            new_domains_count = client.execute(
+                """
+                SELECT count(DISTINCT domain_name)
+                FROM zone_records
+                WHERE tld = %(tld)s
+                  AND download_date = %(new_date)s
+                  AND domain_name NOT IN (
+                      SELECT DISTINCT domain_name
+                      FROM zone_records
+                      WHERE tld = %(tld)s
+                        AND download_date = %(old_date)s
+                  )
+                """,
+                {"tld": tld, "old_date": old_date, "new_date": new_date}
+            )[0][0]
+            
+            return {
+                "tld": tld,
+                "old_date": old_date,
+                "new_date": new_date,
+                "old_count": old_count,
+                "new_count": new_count,
+                "dropped_count": dropped_count,
+                "new_domains_count": new_domains_count,
+                "net_change": new_count - old_count,
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get domain changes summary: {e}")
+            return {
+                "tld": tld,
+                "old_date": old_date,
+                "new_date": new_date,
+                "error": str(e),
+            }
+        finally:
+            client.disconnect()

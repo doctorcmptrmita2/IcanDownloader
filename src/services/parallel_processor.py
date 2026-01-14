@@ -326,19 +326,8 @@ class ParallelDownloadService:
         }
         
         try:
-            # Delete old records first
-            db = self.db_factory()
-            try:
-                deleted = db.delete_tld_records(tld)
-                if deleted > 0:
-                    self.logger_service.log(
-                        "INFO",
-                        f"🗑️ [{tld}] Eski kayıtlar silindi: {deleted:,}",
-                        operation_type="cleanup",
-                        tld=tld,
-                    )
-            finally:
-                db.close()
+            # NOT: Eski kayıtları silmiyoruz - tarihsel veri karşılaştırması için
+            # (Dropped domains tespiti için gerekli)
             
             # Download zone file
             os.makedirs(self.temp_dir, exist_ok=True)
