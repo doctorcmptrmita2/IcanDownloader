@@ -381,8 +381,8 @@ class DownloadService:
         
         # Process file in chunks
         for chunk, chunk_number in parser.parse_zone_file_chunked(result.file_path):
-            # Insert chunk directly to database with retry
-            max_retries = 3
+            # Insert chunk directly to database with robust retry
+            max_retries = 5
             for attempt in range(max_retries):
                 try:
                     self.repository.insert_zone_records(chunk, self.batch_size)
@@ -391,16 +391,16 @@ class DownloadService:
                     if attempt < max_retries - 1:
                         self.logger_service.log(
                             "WARNING",
-                            f"Chunk {chunk_number} insert failed (attempt {attempt + 1}), retrying: {str(e)[:100]}",
+                            f"⚠️ [{tld}] Chunk {chunk_number} hata (deneme {attempt + 1}), tekrar deneniyor...",
                             operation_type="parse",
                             tld=tld,
                         )
-                        time.sleep(1)  # Wait before retry
+                        time.sleep(2 + attempt * 2)  # Increasing backoff: 2, 4, 6, 8 seconds
                         gc.collect()
                     else:
                         self.logger_service.log(
                             "ERROR",
-                            f"Chunk {chunk_number} insert failed after {max_retries} attempts: {str(e)[:200]}",
+                            f"❌ [{tld}] Chunk {chunk_number} {max_retries} denemede başarısız: {str(e)[:150]}",
                             operation_type="parse",
                             tld=tld,
                         )

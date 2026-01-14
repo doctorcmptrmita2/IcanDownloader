@@ -33,19 +33,35 @@ class ClickHouseRepository:
     def client(self) -> Client:
         """Get or create ClickHouse client with optimized settings."""
         if self._client is None:
-            self._client = Client(
-                host=self.host,
-                port=self.port,
-                password=self.password,
-                database=self.database,
-                settings={
-                    'insert_block_size': 1000000,  # Larger blocks
-                    'max_insert_block_size': 1000000,
-                    'min_insert_block_size_rows': 100000,
-                    'max_threads': 8,  # Use more threads
-                },
-            )
+            self._client = self._create_client()
         return self._client
+    
+    def _create_client(self) -> Client:
+        """Create a new ClickHouse client."""
+        return Client(
+            host=self.host,
+            port=self.port,
+            password=self.password,
+            database=self.database,
+            settings={
+                'insert_block_size': 500000,
+                'max_insert_block_size': 500000,
+                'connect_timeout': 30,
+                'send_receive_timeout': 300,
+                'sync_request_timeout': 30,
+            },
+        )
+    
+    def _reconnect(self) -> None:
+        """Force reconnection to ClickHouse."""
+        if self._client:
+            try:
+                self._client.disconnect()
+            except Exception:
+                pass
+        self._client = None
+        # Create new client
+        self._client = self._create_client()
     
     def _ensure_database_exists(self) -> None:
         """Create database if it doesn't exist using default database."""
@@ -129,7 +145,7 @@ class ClickHouseRepository:
         logger.info("Database tables initialized")
     
     def insert_zone_records(self, records: List[ZoneRecord], batch_size: int = 100000) -> int:
-        """Insert zone records in a single batch for maximum performance.
+        """Insert zone records with robust retry logic.
         
         Args:
             records: List of ZoneRecord objects to insert
@@ -141,7 +157,7 @@ class ClickHouseRepository:
         if not records:
             return 0
         
-        # Prepare all data at once - no batching for speed
+        # Prepare all data at once
         data = [
             (
                 self._sanitize_string(r.domain_name),
@@ -154,20 +170,8 @@ class ClickHouseRepository:
             for r in records
         ]
         
-        try:
-            self.client.execute(
-                """
-                INSERT INTO zone_records 
-                (domain_name, tld, record_type, record_data, ttl, download_date)
-                VALUES
-                """,
-                data,
-            )
-            return len(records)
-        except Exception as e:
-            # Try to reconnect and retry once
-            logger.warning(f"Insert failed, attempting reconnect: {e}")
-            self._client = None  # Force reconnect
+        max_retries = 5
+        for attempt in range(max_retries):
             try:
                 self.client.execute(
                     """
@@ -178,9 +182,19 @@ class ClickHouseRepository:
                     data,
                 )
                 return len(records)
-            except Exception as e2:
-                logger.error(f"Insert failed after reconnect: {e2}")
-                raise
+            except Exception as e:
+                error_msg = str(e)
+                logger.warning(f"Insert attempt {attempt + 1} failed: {error_msg[:100]}")
+                
+                # Force reconnect
+                self._reconnect()
+                
+                if attempt < max_retries - 1:
+                    import time
+                    time.sleep(1 + attempt)  # Increasing backoff
+                else:
+                    logger.error(f"Insert failed after {max_retries} attempts: {error_msg}")
+                    raise
     
     def _sanitize_string(self, value: str) -> str:
         """Sanitize string for ClickHouse insertion.
