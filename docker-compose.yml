@@ -5,11 +5,31 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: icann-downloader
     environment:
       - ICANN_USER=${ICANN_USER}
       - ICANN_PASS=${ICANN_PASS}
-      - DB_HOST=${DB_HOST:-clickhouse}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+      - DB_HOST=clickhouse
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-gk4wp30maukhmir56ytodgfl5i4i6l5s}
+      - CRON_HOUR=4
+      - CRON_MINUTE=0
     ports:
       - "8080:8080"
     restart: unless-stopped
+    networks:
+      - domainengine-clickhouse-jbnfph
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.icann-downloader.rule=Host(`${DOMAIN:-icann.example.com}`)
+      - traefik.http.routers.icann-downloader.entrypoints=web
+      - traefik.http.services.icann-downloader.loadbalancer.server.port=8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  domainengine-clickhouse-jbnfph:
+    external: true
