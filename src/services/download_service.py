@@ -392,16 +392,17 @@ class DownloadService:
             total_records += chunk_records
             chunks_processed += 1
             
-            # Log progress
-            self.logger_service.log(
-                "DEBUG",
-                f"Chunk {chunk_number}: {chunk_records} records (total: {total_records})",
-                operation_type="parse",
-                tld=tld,
-            )
+            # Log progress (less verbose)
+            if chunks_processed % 20 == 0:
+                self.logger_service.log(
+                    "DEBUG",
+                    f"Chunk {chunk_number}: {chunk_records} records (total: {total_records})",
+                    operation_type="parse",
+                    tld=tld,
+                )
             
-            # Log progress every 10 chunks
-            if chunks_processed % 10 == 0:
+            # Log progress every 50 chunks (less frequent for speed)
+            if chunks_processed % 50 == 0:
                 elapsed = time.time() - parse_start
                 rate = total_records / elapsed if elapsed > 0 else 0
                 self.logger_service.log(

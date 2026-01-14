@@ -32,14 +32,14 @@ class Config:
     
     # Download settings
     temp_dir: str = "/app/temp"
-    batch_size: int = 10000
+    batch_size: int = 500000  # Large batches for fast inserts
     max_retries: int = 3
     
     # Large file processing settings
-    chunk_size: int = 50000  # Records per chunk for large files
-    chunk_delay: float = 0.1  # Delay between chunks (seconds)
-    large_file_threshold: int = 10_000_000  # 10MB threshold for large file mode
-    gc_interval: int = 5  # Run GC every N chunks
+    chunk_size: int = 500000  # 500K records per chunk - much faster
+    chunk_delay: float = 0.0  # No delay
+    large_file_threshold: int = 5_000_000  # 5MB threshold for large file mode
+    gc_interval: int = 20  # Less frequent GC
     
     # Scheduler settings
     cron_hour: int = 4

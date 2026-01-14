@@ -31,13 +31,20 @@ class ClickHouseRepository:
     
     @property
     def client(self) -> Client:
-        """Get or create ClickHouse client."""
+        """Get or create ClickHouse client with optimized settings."""
         if self._client is None:
             self._client = Client(
                 host=self.host,
                 port=self.port,
                 password=self.password,
                 database=self.database,
+                settings={
+                    'insert_block_size': 1000000,  # Larger blocks
+                    'max_insert_block_size': 1000000,
+                    'min_insert_block_size_rows': 100000,
+                    'max_threads': 8,  # Use more threads
+                },
+                compression=True,  # Enable compression
             )
         return self._client
     
@@ -122,31 +129,46 @@ class ClickHouseRepository:
         
         logger.info("Database tables initialized")
     
-    def insert_zone_records(self, records: List[ZoneRecord], batch_size: int = 10000) -> int:
-        """Insert zone records in batches.
+    def insert_zone_records(self, records: List[ZoneRecord], batch_size: int = 100000) -> int:
+        """Insert zone records in a single batch for maximum performance.
         
         Args:
             records: List of ZoneRecord objects to insert
-            batch_size: Number of records per batch (default 10000)
+            batch_size: Ignored - inserts all records at once for speed
             
         Returns:
             Total number of records inserted
         """
-        total_inserted = 0
+        if not records:
+            return 0
         
-        for batch in self._batch_records(records, batch_size):
-            data = [
-                (
-                    self._sanitize_string(r.domain_name),
-                    r.tld,
-                    r.record_type,
-                    self._sanitize_string(r.record_data),
-                    r.ttl,
-                    r.download_date,
-                )
-                for r in batch
-            ]
-            
+        # Prepare all data at once - no batching for speed
+        data = [
+            (
+                self._sanitize_string(r.domain_name),
+                r.tld,
+                r.record_type,
+                self._sanitize_string(r.record_data),
+                r.ttl,
+                r.download_date,
+            )
+            for r in records
+        ]
+        
+        try:
+            self.client.execute(
+                """
+                INSERT INTO zone_records 
+                (domain_name, tld, record_type, record_data, ttl, download_date)
+                VALUES
+                """,
+                data,
+            )
+            return len(records)
+        except Exception as e:
+            # Try to reconnect and retry once
+            logger.warning(f"Insert failed, attempting reconnect: {e}")
+            self._client = None  # Force reconnect
             try:
                 self.client.execute(
                     """
@@ -156,26 +178,10 @@ class ClickHouseRepository:
                     """,
                     data,
                 )
-                total_inserted += len(batch)
-            except Exception as e:
-                # Try to reconnect and retry once
-                logger.warning(f"Insert failed, attempting reconnect: {e}")
-                self._client = None  # Force reconnect
-                try:
-                    self.client.execute(
-                        """
-                        INSERT INTO zone_records 
-                        (domain_name, tld, record_type, record_data, ttl, download_date)
-                        VALUES
-                        """,
-                        data,
-                    )
-                    total_inserted += len(batch)
-                except Exception as e2:
-                    logger.error(f"Insert failed after reconnect: {e2}")
-                    raise
-            
-        return total_inserted
+                return len(records)
+            except Exception as e2:
+                logger.error(f"Insert failed after reconnect: {e2}")
+                raise
     
     def _sanitize_string(self, value: str) -> str:
         """Sanitize string for ClickHouse insertion.
