@@ -1,4 +1,5 @@
 """Download Service for coordinating download and parse operations."""
+import gc
 import os
 import time
 import threading
@@ -52,6 +53,10 @@ class DownloadService:
         logger_service: LoggerService,
         temp_dir: str = "/app/temp",
         batch_size: int = 10000,
+        chunk_size: int = 50000,
+        chunk_delay: float = 0.1,
+        large_file_threshold: int = 100_000_000,
+        gc_interval: int = 5,
     ):
         """Initialize with dependencies.
         
@@ -62,6 +67,10 @@ class DownloadService:
             logger_service: Logger service
             temp_dir: Directory for temporary files
             batch_size: Batch size for database inserts
+            chunk_size: Records per chunk for large file processing
+            chunk_delay: Delay between chunks in seconds
+            large_file_threshold: File size threshold for large file mode (bytes)
+            gc_interval: Run GC every N chunks
         """
         self.czds_client = czds_client
         self.parser_factory = parser_factory
@@ -69,6 +78,10 @@ class DownloadService:
         self.logger_service = logger_service
         self.temp_dir = temp_dir
         self.batch_size = batch_size
+        self.chunk_size = chunk_size
+        self.chunk_delay = chunk_delay
+        self.large_file_threshold = large_file_threshold
+        self.gc_interval = gc_interval
         
         self._job_status = JobStatus()
         self._lock = threading.Lock()
@@ -203,38 +216,17 @@ class DownloadService:
             
             self.logger_service.log_download_complete(tld, result)
             
-            # Parse zone file
-            self.logger_service.log_parse_start(tld)
-            parse_start = time.time()
+            # Check if large file mode is needed
+            is_large_file = result.file_size >= self.large_file_threshold
             
-            parser = self.parser_factory(tld)
-            records_batch: List[ZoneRecord] = []
-            total_records = 0
-            
-            for record in parser.parse_zone_file(result.file_path):
-                records_batch.append(record)
-                
-                if len(records_batch) >= self.batch_size:
-                    self.repository.insert_zone_records(records_batch, self.batch_size)
-                    total_records += len(records_batch)
-                    records_batch = []
-                    
-                    # Log progress every 100k records
-                    if total_records % 100000 == 0:
-                        self.logger_service.log_parse_progress(tld, total_records)
-            
-            # Insert remaining records
-            if records_batch:
-                self.repository.insert_zone_records(records_batch, self.batch_size)
-                total_records += len(records_batch)
-            
-            parse_duration = int(time.time() - parse_start)
+            if is_large_file:
+                logger.info(f"Large file detected for {tld} ({result.file_size / 1024 / 1024:.1f}MB), using chunked processing")
+                total_records = self._process_large_zone_file(tld, result)
+            else:
+                total_records = self._process_zone_file(tld, result)
             
             # Update result with parse info
             result.records_count = total_records
-            result.parse_duration = parse_duration
-            
-            self.logger_service.log_parse_complete(tld, total_records, parse_duration)
             
             # Clean up downloaded file
             try:
@@ -267,6 +259,132 @@ class DownloadService:
             self._log_to_db(tld, error_result)
             
             return error_result
+    
+    def _process_zone_file(self, tld: str, result: DownloadResult) -> int:
+        """Process zone file using standard method (for smaller files).
+        
+        Args:
+            tld: TLD being processed
+            result: Download result with file path
+            
+        Returns:
+            Total records processed
+        """
+        self.logger_service.log_parse_start(tld)
+        parse_start = time.time()
+        
+        parser = self.parser_factory(tld)
+        records_batch: List[ZoneRecord] = []
+        total_records = 0
+        
+        for record in parser.parse_zone_file(result.file_path):
+            records_batch.append(record)
+            
+            if len(records_batch) >= self.batch_size:
+                self.repository.insert_zone_records(records_batch, self.batch_size)
+                total_records += len(records_batch)
+                records_batch = []
+                
+                # Log progress every 100k records
+                if total_records % 100000 == 0:
+                    self.logger_service.log_parse_progress(tld, total_records)
+        
+        # Insert remaining records
+        if records_batch:
+            self.repository.insert_zone_records(records_batch, self.batch_size)
+            total_records += len(records_batch)
+        
+        parse_duration = int(time.time() - parse_start)
+        result.parse_duration = parse_duration
+        
+        self.logger_service.log_parse_complete(tld, total_records, parse_duration)
+        
+        return total_records
+    
+    def _process_large_zone_file(self, tld: str, result: DownloadResult) -> int:
+        """Process large zone file using chunked streaming method.
+        
+        Memory-efficient processing for large files like .com zone.
+        Uses chunked parsing with GC and delays between chunks.
+        
+        Args:
+            tld: TLD being processed
+            result: Download result with file path
+            
+        Returns:
+            Total records processed
+        """
+        self.logger_service.log_parse_start(tld)
+        self.logger_service.log(
+            "INFO",
+            f"Using chunked processing for large file: {result.file_size / 1024 / 1024:.1f}MB",
+            operation_type="parse",
+            tld=tld,
+        )
+        
+        parse_start = time.time()
+        
+        # Create parser with chunking configuration
+        parser = self.parser_factory(tld)
+        parser.configure_chunking(
+            chunk_size=self.chunk_size,
+            chunk_delay=self.chunk_delay,
+            gc_interval=self.gc_interval,
+        )
+        
+        total_records = 0
+        chunks_processed = 0
+        
+        # Process file in chunks
+        for chunk, chunk_number in parser.parse_zone_file_chunked(result.file_path):
+            # Insert chunk directly to database
+            self.repository.insert_zone_records(chunk, self.batch_size)
+            
+            chunk_records = len(chunk)
+            total_records += chunk_records
+            chunks_processed += 1
+            
+            # Log progress
+            self.logger_service.log(
+                "DEBUG",
+                f"Chunk {chunk_number}: {chunk_records} records (total: {total_records})",
+                operation_type="parse",
+                tld=tld,
+            )
+            
+            # Log progress every 10 chunks
+            if chunks_processed % 10 == 0:
+                elapsed = time.time() - parse_start
+                rate = total_records / elapsed if elapsed > 0 else 0
+                self.logger_service.log(
+                    "INFO",
+                    f"Progress: {total_records:,} records in {elapsed:.0f}s ({rate:.0f} rec/s)",
+                    operation_type="parse",
+                    tld=tld,
+                )
+            
+            # Clear chunk reference and run GC
+            del chunk
+            
+            # Force GC every gc_interval chunks
+            if chunks_processed % self.gc_interval == 0:
+                gc.collect()
+        
+        # Final GC
+        gc.collect()
+        
+        parse_duration = int(time.time() - parse_start)
+        result.parse_duration = parse_duration
+        
+        self.logger_service.log_parse_complete(tld, total_records, parse_duration)
+        self.logger_service.log(
+            "INFO",
+            f"Large file processing complete: {chunks_processed} chunks, {total_records:,} records",
+            operation_type="parse",
+            tld=tld,
+        )
+        
+        return total_records
     
     def _log_to_db(self, tld: str, result: DownloadResult) -> None:
         """Log download result to database.

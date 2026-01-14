@@ -1,11 +1,13 @@
 """Zone file parser for DNS zone files."""
+import gc
 import gzip
 import os
 import re
 import tempfile
+import time
 import logging
 from datetime import date
-from typing import Generator, Optional
+from typing import Generator, Optional, List, Tuple
 
 from src.models import ZoneRecord
 
@@ -41,6 +43,26 @@ class ZoneParser:
         """
         self.tld = tld
         self.download_date = download_date or date.today()
+        self.chunk_size = 50000  # Default chunk size
+        self.chunk_delay = 0.1  # Default delay between chunks
+        self.gc_interval = 5  # Run GC every N chunks
+    
+    def configure_chunking(
+        self, 
+        chunk_size: int = 50000, 
+        chunk_delay: float = 0.1,
+        gc_interval: int = 5
+    ) -> None:
+        """Configure chunking parameters.
+        
+        Args:
+            chunk_size: Number of records per chunk
+            chunk_delay: Delay in seconds between chunks
+            gc_interval: Run garbage collection every N chunks
+        """
+        self.chunk_size = chunk_size
+        self.chunk_delay = chunk_delay
+        self.gc_interval = gc_interval
     
     def parse_zone_file(self, file_path: str) -> Generator[ZoneRecord, None, None]:
         """Parse gzipped zone file and yield DNS records.
@@ -190,3 +212,84 @@ class ZoneParser:
         for _ in self.parse_zone_file(file_path):
             count += 1
         return count
+    
+    def parse_zone_file_chunked(
+        self, 
+        file_path: str
+    ) -> Generator[Tuple[List[ZoneRecord], int], None, None]:
+        """Parse gzipped zone file and yield chunks of DNS records.
+        
+        Memory-efficient parsing for large zone files. Yields batches of records
+        with automatic garbage collection and optional delays between chunks.
+        
+        Args:
+            file_path: Path to the gzipped zone file
+            
+        Yields:
+            Tuple of (list of ZoneRecord objects, chunk number)
+            
+        Raises:
+            ParseError: If file cannot be opened or decompressed
+        """
+        line_number = 0
+        chunk: List[ZoneRecord] = []
+        chunk_number = 0
+        
+        try:
+            # Open gzipped file directly with streaming
+            with gzip.open(file_path, 'rt', encoding='utf-8', errors='replace') as f:
+                for line in f:
+                    line_number += 1
+                    record = self._parse_line(line, line_number)
+                    
+                    if record:
+                        chunk.append(record)
+                        
+                        # Yield chunk when full
+                        if len(chunk) >= self.chunk_size:
+                            chunk_number += 1
+                            yield chunk, chunk_number
+                            
+                            # Clear chunk and run GC periodically
+                            chunk = []
+                            
+                            if chunk_number % self.gc_interval == 0:
+                                gc.collect()
+                                logger.debug(f"GC run after chunk {chunk_number}")
+                            
+                            # Add delay between chunks to prevent memory pressure
+                            if self.chunk_delay > 0:
+                                time.sleep(self.chunk_delay)
+                
+                # Yield remaining records
+                if chunk:
+                    chunk_number += 1
+                    yield chunk, chunk_number
+                    
+        except gzip.BadGzipFile as e:
+            raise ParseError(f"Invalid gzip file: {file_path}") from e
+        except IOError as e:
+            raise ParseError(f"Cannot read file {file_path}: {e}") from e
+        finally:
+            # Final garbage collection
+            gc.collect()
+    
+    def estimate_file_records(self, file_path: str) -> int:
+        """Estimate number of records in file based on file size.
+        
+        Uses heuristic: ~100 bytes per record on average.
+        
+        Args:
+            file_path: Path to the gzipped zone file
+            
+        Returns:
+            Estimated number of records
+        """
+        try:
+            file_size = os.path.getsize(file_path)
+            # Gzip typically has 10:1 compression ratio for text
+            # Average zone record is ~100 bytes uncompressed
+            estimated_uncompressed = file_size * 10
+            return estimated_uncompressed // 100
+        except OSError:
+            return 0

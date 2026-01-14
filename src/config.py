@@ -35,6 +35,12 @@ class Config:
     batch_size: int = 10000
     max_retries: int = 3
     
+    # Large file processing settings
+    chunk_size: int = 50000  # Records per chunk for large files
+    chunk_delay: float = 0.1  # Delay between chunks (seconds)
+    large_file_threshold: int = 100_000_000  # 100MB threshold for large file mode
+    gc_interval: int = 5  # Run GC every N chunks
+    
     # Scheduler settings
     cron_hour: int = 4
     cron_minute: int = 0
@@ -102,6 +108,10 @@ class Config:
             max_retries=int(os.environ.get("MAX_RETRIES", "3")),
             cron_hour=int(os.environ.get("CRON_HOUR", "4")),
             cron_minute=int(os.environ.get("CRON_MINUTE", "0")),
+            chunk_size=int(os.environ.get("CHUNK_SIZE", "50000")),
+            chunk_delay=float(os.environ.get("CHUNK_DELAY", "0.1")),
+            large_file_threshold=int(os.environ.get("LARGE_FILE_THRESHOLD", "100000000")),
+            gc_interval=int(os.environ.get("GC_INTERVAL", "5")),
         )
     
     @staticmethod

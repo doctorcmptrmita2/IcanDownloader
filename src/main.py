@@ -86,6 +86,10 @@ def create_services(config):
         logger_service=logger_service,
         temp_dir=config.temp_dir,
         batch_size=config.batch_size,
+        chunk_size=config.chunk_size,
+        chunk_delay=config.chunk_delay,
+        large_file_threshold=config.large_file_threshold,
+        gc_interval=config.gc_interval,
     )
     
     # Create scheduler service
