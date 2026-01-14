@@ -219,6 +219,28 @@ class ClickHouseRepository:
             value = value[:65535]
         return value
     
+    def _sanitize_search_query(self, query: str) -> str:
+        """Sanitize search query for safe LIKE operations.
+        
+        Escapes special characters that could cause SQL issues.
+        """
+        if not query:
+            return query
+        # Remove null bytes
+        query = query.replace('\x00', '')
+        # Escape special LIKE characters
+        query = query.replace('\\', '\\\\')
+        query = query.replace('%', '\\%')
+        query = query.replace('_', '\\_')
+        # Remove quotes that could break the query
+        query = query.replace("'", "")
+        query = query.replace('"', '')
+        query = query.replace('`', '')
+        # Limit length
+        if len(query) > 255:
+            query = query[:255]
+        return query
+    
     def _batch_records(
         self, records: List[ZoneRecord], batch_size: int
     ) -> Generator[List[ZoneRecord], None, None]:
@@ -370,8 +392,11 @@ class ClickHouseRepository:
         """Search domains by name pattern using read client."""
         client = self._get_read_client()
         try:
+            # Sanitize query to prevent SQL issues
+            safe_query = self._sanitize_search_query(query)
+            
             conditions = ["domain_name LIKE %(query)s"]
-            params = {"query": f"%{query}%", "limit": limit, "offset": offset}
+            params = {"query": f"%{safe_query}%", "limit": limit, "offset": offset}
             
             if tld:
                 conditions.append("tld = %(tld)s")
