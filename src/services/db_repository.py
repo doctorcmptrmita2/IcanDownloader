@@ -547,3 +547,64 @@ class ClickHouseRepository:
         except Exception as e:
             logger.warning(f"Failed to get available TLDs: {e}")
             return []
+    
+    def delete_tld_records(self, tld: str) -> int:
+        """Delete all records for a specific TLD.
+        
+        Used before re-downloading to prevent data duplication.
+        
+        Args:
+            tld: TLD to delete records for
+            
+        Returns:
+            Number of records deleted (approximate)
+        """
+        try:
+            # Get count before delete
+            count_result = self.client.execute(
+                "SELECT count() FROM zone_records WHERE tld = %(tld)s",
+                {"tld": tld}
+            )
+            count = count_result[0][0] if count_result else 0
+            
+            if count > 0:
+                # Use ALTER TABLE DELETE for MergeTree tables
+                self.client.execute(
+                    "ALTER TABLE zone_records DELETE WHERE tld = %(tld)s",
+                    {"tld": tld}
+                )
+                logger.info(f"Deleted {count} records for TLD: {tld}")
+            
+            return count
+        except Exception as e:
+            logger.error(f"Failed to delete records for TLD {tld}: {e}")
+            raise
+    
+    def delete_old_records(self, days: int = 7) -> int:
+        """Delete records older than specified days.
+        
+        Args:
+            days: Delete records older than this many days
+            
+        Returns:
+            Number of records deleted (approximate)
+        """
+        try:
+            # Get count before delete
+            count_result = self.client.execute(
+                "SELECT count() FROM zone_records WHERE download_date < today() - %(days)s",
+                {"days": days}
+            )
+            count = count_result[0][0] if count_result else 0
+            
+            if count > 0:
+                self.client.execute(
+                    "ALTER TABLE zone_records DELETE WHERE download_date < today() - %(days)s",
+                    {"days": days}
+                )
+                logger.info(f"Deleted {count} records older than {days} days")
+            
+            return count
+        except Exception as e:
+            logger.error(f"Failed to delete old records: {e}")
+            raise

@@ -203,6 +203,24 @@ class DownloadService:
         self.logger_service.log_download_start(tld)
         
         try:
+            # Delete old records for this TLD before downloading new ones
+            try:
+                deleted = self.repository.delete_tld_records(tld)
+                if deleted > 0:
+                    self.logger_service.log(
+                        "INFO",
+                        f"🗑️ [{tld}] Eski kayıtlar silindi: {deleted:,} kayıt",
+                        operation_type="cleanup",
+                        tld=tld,
+                    )
+            except Exception as e:
+                self.logger_service.log(
+                    "WARNING",
+                    f"⚠️ [{tld}] Eski kayıtlar silinemedi: {str(e)[:100]}",
+                    operation_type="cleanup",
+                    tld=tld,
+                )
+            
             # Ensure temp directory exists
             os.makedirs(self.temp_dir, exist_ok=True)
             
