@@ -276,23 +276,49 @@ class DownloadService:
         parser = self.parser_factory(tld)
         records_batch: List[ZoneRecord] = []
         total_records = 0
+        batch_count = 0
         
         for record in parser.parse_zone_file(result.file_path):
             records_batch.append(record)
             
             if len(records_batch) >= self.batch_size:
-                self.repository.insert_zone_records(records_batch, self.batch_size)
-                total_records += len(records_batch)
+                try:
+                    self.repository.insert_zone_records(records_batch, self.batch_size)
+                    total_records += len(records_batch)
+                    batch_count += 1
+                except Exception as e:
+                    self.logger_service.log(
+                        "ERROR",
+                        f"DB insert failed at batch {batch_count}: {str(e)[:200]}",
+                        operation_type="parse",
+                        tld=tld,
+                    )
+                    raise
+                
                 records_batch = []
                 
                 # Log progress every 100k records
                 if total_records % 100000 == 0:
                     self.logger_service.log_parse_progress(tld, total_records)
+                
+                # GC every 50 batches for medium files
+                if batch_count % 50 == 0:
+                    gc.collect()
+                    time.sleep(0.05)  # Small delay to prevent overwhelming DB
         
         # Insert remaining records
         if records_batch:
-            self.repository.insert_zone_records(records_batch, self.batch_size)
-            total_records += len(records_batch)
+            try:
+                self.repository.insert_zone_records(records_batch, self.batch_size)
+                total_records += len(records_batch)
+            except Exception as e:
+                self.logger_service.log(
+                    "ERROR",
+                    f"DB insert failed for final batch: {str(e)[:200]}",
+                    operation_type="parse",
+                    tld=tld,
+                )
+                raise
         
         parse_duration = int(time.time() - parse_start)
         result.parse_duration = parse_duration
@@ -337,8 +363,30 @@ class DownloadService:
         
         # Process file in chunks
         for chunk, chunk_number in parser.parse_zone_file_chunked(result.file_path):
-            # Insert chunk directly to database
-            self.repository.insert_zone_records(chunk, self.batch_size)
+            # Insert chunk directly to database with retry
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    self.repository.insert_zone_records(chunk, self.batch_size)
+                    break
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        self.logger_service.log(
+                            "WARNING",
+                            f"Chunk {chunk_number} insert failed (attempt {attempt + 1}), retrying: {str(e)[:100]}",
+                            operation_type="parse",
+                            tld=tld,
+                        )
+                        time.sleep(1)  # Wait before retry
+                        gc.collect()
+                    else:
+                        self.logger_service.log(
+                            "ERROR",
+                            f"Chunk {chunk_number} insert failed after {max_retries} attempts: {str(e)[:200]}",
+                            operation_type="parse",
+                            tld=tld,
+                        )
+                        raise
             
             chunk_records = len(chunk)
             total_records += chunk_records

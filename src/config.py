@@ -38,7 +38,7 @@ class Config:
     # Large file processing settings
     chunk_size: int = 50000  # Records per chunk for large files
     chunk_delay: float = 0.1  # Delay between chunks (seconds)
-    large_file_threshold: int = 100_000_000  # 100MB threshold for large file mode
+    large_file_threshold: int = 10_000_000  # 10MB threshold for large file mode
     gc_interval: int = 5  # Run GC every N chunks
     
     # Scheduler settings

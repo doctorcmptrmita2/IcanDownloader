@@ -137,27 +137,65 @@ class ClickHouseRepository:
         for batch in self._batch_records(records, batch_size):
             data = [
                 (
-                    r.domain_name,
+                    self._sanitize_string(r.domain_name),
                     r.tld,
                     r.record_type,
-                    r.record_data,
+                    self._sanitize_string(r.record_data),
                     r.ttl,
                     r.download_date,
                 )
                 for r in batch
             ]
             
-            self.client.execute(
-                """
-                INSERT INTO zone_records 
-                (domain_name, tld, record_type, record_data, ttl, download_date)
-                VALUES
-                """,
-                data,
-            )
-            total_inserted += len(batch)
+            try:
+                self.client.execute(
+                    """
+                    INSERT INTO zone_records 
+                    (domain_name, tld, record_type, record_data, ttl, download_date)
+                    VALUES
+                    """,
+                    data,
+                )
+                total_inserted += len(batch)
+            except Exception as e:
+                # Try to reconnect and retry once
+                logger.warning(f"Insert failed, attempting reconnect: {e}")
+                self._client = None  # Force reconnect
+                try:
+                    self.client.execute(
+                        """
+                        INSERT INTO zone_records 
+                        (domain_name, tld, record_type, record_data, ttl, download_date)
+                        VALUES
+                        """,
+                        data,
+                    )
+                    total_inserted += len(batch)
+                except Exception as e2:
+                    logger.error(f"Insert failed after reconnect: {e2}")
+                    raise
             
         return total_inserted
+    
+    def _sanitize_string(self, value: str) -> str:
+        """Sanitize string for ClickHouse insertion.
+        
+        Removes or replaces problematic characters.
+        
+        Args:
+            value: String to sanitize
+            
+        Returns:
+            Sanitized string
+        """
+        if not value:
+            return value
+        # Replace null bytes and other problematic characters
+        value = value.replace('\x00', '')
+        # Limit string length to prevent issues
+        if len(value) > 65535:
+            value = value[:65535]
+        return value
     
     def _batch_records(
         self, records: List[ZoneRecord], batch_size: int
@@ -378,26 +416,30 @@ class ClickHouseRepository:
         Returns:
             List of TLD statistics
         """
-        result = self.client.execute("""
-            SELECT 
-                tld,
-                count() as record_count,
-                countDistinct(domain_name) as unique_domains,
-                max(download_date) as last_updated
-            FROM zone_records
-            GROUP BY tld
-            ORDER BY record_count DESC
-        """)
-        
-        return [
-            {
-                "tld": row[0],
-                "record_count": row[1],
-                "unique_domains": row[2],
-                "last_updated": row[3].isoformat() if row[3] else None,
-            }
-            for row in result
-        ]
+        try:
+            result = self.client.execute("""
+                SELECT 
+                    tld,
+                    count() as record_count,
+                    countDistinct(domain_name) as unique_domains,
+                    max(download_date) as last_updated
+                FROM zone_records
+                GROUP BY tld
+                ORDER BY record_count DESC
+            """)
+            
+            return [
+                {
+                    "tld": row[0],
+                    "record_count": row[1],
+                    "unique_domains": row[2],
+                    "last_updated": row[3].isoformat() if row[3] else None,
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to get TLD stats: {e}")
+            return []
     
     def get_record_type_stats(self) -> List[dict]:
         """Get statistics per record type.
@@ -422,42 +464,69 @@ class ClickHouseRepository:
         Returns:
             Dictionary with dashboard stats
         """
-        # Total records
-        total_records = self.client.execute("SELECT count() FROM zone_records")[0][0]
-        
-        # Unique domains
-        unique_domains = self.client.execute(
-            "SELECT countDistinct(domain_name) FROM zone_records"
-        )[0][0]
-        
-        # TLD count
-        tld_count = self.client.execute(
-            "SELECT countDistinct(tld) FROM zone_records"
-        )[0][0]
-        
-        # Last update
-        last_update = self.client.execute(
-            "SELECT max(download_date) FROM zone_records"
-        )[0][0]
-        
-        # Successful downloads
-        success_count = self.client.execute(
-            "SELECT count() FROM download_logs WHERE status = 'success'"
-        )[0][0]
-        
-        # Failed downloads
-        failed_count = self.client.execute(
-            "SELECT count() FROM download_logs WHERE status = 'failed'"
-        )[0][0]
-        
-        return {
-            "total_records": total_records,
-            "unique_domains": unique_domains,
-            "tld_count": tld_count,
-            "last_update": last_update.isoformat() if last_update else None,
-            "successful_downloads": success_count,
-            "failed_downloads": failed_count,
+        stats = {
+            "total_records": 0,
+            "unique_domains": 0,
+            "tld_count": 0,
+            "last_update": None,
+            "successful_downloads": 0,
+            "failed_downloads": 0,
         }
+        
+        try:
+            # Total records
+            result = self.client.execute("SELECT count() FROM zone_records")
+            stats["total_records"] = result[0][0] if result else 0
+        except Exception as e:
+            logger.warning(f"Failed to get total records: {e}")
+        
+        try:
+            # Unique domains
+            result = self.client.execute(
+                "SELECT countDistinct(domain_name) FROM zone_records"
+            )
+            stats["unique_domains"] = result[0][0] if result else 0
+        except Exception as e:
+            logger.warning(f"Failed to get unique domains: {e}")
+        
+        try:
+            # TLD count
+            result = self.client.execute(
+                "SELECT countDistinct(tld) FROM zone_records"
+            )
+            stats["tld_count"] = result[0][0] if result else 0
+        except Exception as e:
+            logger.warning(f"Failed to get TLD count: {e}")
+        
+        try:
+            # Last update
+            result = self.client.execute(
+                "SELECT max(download_date) FROM zone_records"
+            )
+            if result and result[0][0]:
+                stats["last_update"] = result[0][0].isoformat()
+        except Exception as e:
+            logger.warning(f"Failed to get last update: {e}")
+        
+        try:
+            # Successful downloads
+            result = self.client.execute(
+                "SELECT count() FROM download_logs WHERE status = 'success'"
+            )
+            stats["successful_downloads"] = result[0][0] if result else 0
+        except Exception as e:
+            logger.warning(f"Failed to get success count: {e}")
+        
+        try:
+            # Failed downloads
+            result = self.client.execute(
+                "SELECT count() FROM download_logs WHERE status = 'failed'"
+            )
+            stats["failed_downloads"] = result[0][0] if result else 0
+        except Exception as e:
+            logger.warning(f"Failed to get failed count: {e}")
+        
+        return stats
     
     def get_available_tlds(self) -> List[str]:
         """Get list of available TLDs in database.
@@ -465,7 +534,11 @@ class ClickHouseRepository:
         Returns:
             List of TLD names
         """
-        result = self.client.execute(
-            "SELECT DISTINCT tld FROM zone_records ORDER BY tld"
-        )
-        return [row[0] for row in result]
+        try:
+            result = self.client.execute(
+                "SELECT DISTINCT tld FROM zone_records ORDER BY tld"
+            )
+            return [row[0] for row in result]
+        except Exception as e:
+            logger.warning(f"Failed to get available TLDs: {e}")
+            return []
