@@ -1,36 +1,80 @@
-# ICANN Downloader - Dokploy Deployment Rehberi
+# ICANN Downloader - Dokploy Sıfırdan Kurulum
 
-## Ön Gereksinimler
-
-- Dokploy kurulu ve çalışır durumda
-- ClickHouse zaten deploy edilmiş ve `domainengine-clickhouse-jbnfph` network'ünde
-- ICANN CZDS hesabı (https://czds.icann.org)
+Yeni Dokploy sunucusunda sıfırdan deployment.
 
 ---
 
-## Adım 1: ClickHouse Kontrolü
+## BÖLÜM 1: PROJE OLUŞTUR
 
-ClickHouse'un çalıştığından ve doğru network'te olduğundan emin ol:
-
-1. Dokploy'da ClickHouse service'ine git
-2. Network'ün `domainengine-clickhouse-jbnfph` olduğunu doğrula
-3. Service adının `clickhouse` olduğunu doğrula (Compose'daki service adı)
-
----
-
-## Adım 2: Yeni Compose Service Oluştur
-
-1. Dokploy Dashboard'a git
-2. **"Create Service"** → **"Compose"** seç
-3. **Source**: GitHub
-4. **Repository**: `https://github.com/doctorcmptrmita2/IcanDownloader`
-5. **Branch**: `main`
+1. Dokploy Dashboard'a gir
+2. Sol menüden **"Projects"** tıkla
+3. **"+ Create Project"** butonuna tıkla
+4. **Name**: `icann-zone-downloader`
+5. **"Create"** tıkla
 
 ---
 
-## Adım 3: Compose Dosyasını Yapıştır
+## BÖLÜM 2: CLICKHOUSE SERVİSİ OLUŞTUR
 
-Dokploy'da Compose editörüne şunu yapıştır:
+1. Oluşturduğun projeye tıkla (`icann-zone-downloader`)
+2. **"+ Create Service"** tıkla
+3. **"Compose"** seç
+
+### Compose Ayarları:
+- **Service Name**: `clickhouse`
+
+### Compose İçeriği:
+Aşağıdaki YAML'ı yapıştır:
+
+```yaml
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse-db
+    environment:
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=gk4wp30maukhmir56ytodgfl5i4i6l5s
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    restart: unless-stopped
+
+volumes:
+  clickhouse_data:
+```
+
+4. **"Deploy"** tıkla
+5. Loglardan başarılı başladığını doğrula
+
+---
+
+## BÖLÜM 3: CLICKHOUSE NETWORK ADINI BUL
+
+1. ClickHouse service'ine tıkla
+2. **"Advanced"** sekmesine git
+3. **"Networks"** bölümünü bul
+4. Network adını not al (örnek: `icann-zone-downloader-clickhouse-abc123`)
+
+> ⚠️ Bu network adını bir sonraki adımda kullanacaksın!
+
+---
+
+## BÖLÜM 4: ICANN DOWNLOADER SERVİSİ OLUŞTUR
+
+1. Aynı projede **"+ Create Service"** tıkla
+2. **"Compose"** seç
+
+### Compose Ayarları:
+- **Service Name**: `icann-downloader`
+
+### Compose İçeriği:
+Aşağıdaki YAML'ı yapıştır ve **DEĞİŞKENLERİ DÜZENLE**:
 
 ```yaml
 services:
@@ -47,44 +91,69 @@ services:
       - CRON_MINUTE=0
     restart: unless-stopped
     networks:
-      - domainengine-clickhouse-jbnfph
+      - BURAYA_CLICKHOUSE_NETWORK_ADI
     labels:
       - traefik.enable=true
-      - traefik.http.routers.icann-downloader.rule=Host(`icann.senin-domainin.com`)
+      - traefik.http.routers.icann-downloader.rule=Host(`BURAYA_DOMAIN_YAZILACAK`)
       - traefik.http.routers.icann-downloader.entrypoints=web
       - traefik.http.services.icann-downloader.loadbalancer.server.port=8080
 
 networks:
-  domainengine-clickhouse-jbnfph:
+  BURAYA_CLICKHOUSE_NETWORK_ADI:
+    external: true
+```
+
+### Değiştirilecek Yerler:
+
+| Yer | Ne Yazılacak | Örnek |
+|-----|--------------|-------|
+| `BURAYA_ICANN_KULLANICI_ADIN` | ICANN CZDS email | `user@email.com` |
+| `BURAYA_ICANN_SIFREN` | ICANN CZDS şifre | `MyPassword123` |
+| `BURAYA_CLICKHOUSE_NETWORK_ADI` | Bölüm 3'te bulduğun network adı | `icann-zone-downloader-clickhouse-abc123` |
+| `BURAYA_DOMAIN_YAZILACAK` | Traefik domain | `icann.example.com` |
+
+> ⚠️ Network adı **2 yerde** değiştirilecek: `networks:` altında ve en alttaki `networks:` tanımında!
+
+---
+
+## BÖLÜM 5: ÖRNEK TAMAMLANMIŞ COMPOSE
+
+Network adı `icann-zone-downloader-clickhouse-xyz789` olsun:
+
+```yaml
+services:
+  icann-downloader:
+    build:
+      context: https://github.com/doctorcmptrmita2/IcanDownloader.git#main
+    container_name: icann-downloader
+    environment:
+      - ICANN_USER=myemail@gmail.com
+      - ICANN_PASS=MySecretPassword123
+      - DB_HOST=clickhouse
+      - CLICKHOUSE_PASSWORD=gk4wp30maukhmir56ytodgfl5i4i6l5s
+      - CRON_HOUR=4
+      - CRON_MINUTE=0
+    restart: unless-stopped
+    networks:
+      - icann-zone-downloader-clickhouse-xyz789
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.icann-downloader.rule=Host(`icann.mydomain.com`)
+      - traefik.http.routers.icann-downloader.entrypoints=web
+      - traefik.http.services.icann-downloader.loadbalancer.server.port=8080
+
+networks:
+  icann-zone-downloader-clickhouse-xyz789:
     external: true
 ```
 
 ---
 
-## Adım 4: Değişkenleri Düzenle
-
-Compose dosyasında şunları değiştir:
-
-| Değişken | Açıklama | Örnek |
-|----------|----------|-------|
-| `ICANN_USER` | ICANN CZDS kullanıcı adın | `user@email.com` |
-| `ICANN_PASS` | ICANN CZDS şifren | `MySecretPass123` |
-| `CLICKHOUSE_PASSWORD` | ClickHouse şifresi | `gk4wp30maukhmir56ytodgfl5i4i6l5s` |
-| `Host(...)` | Traefik domain | `icann.example.com` |
-
----
-
-## Adım 5: Deploy Et
+## BÖLÜM 6: DEPLOY ET
 
 1. **"Deploy"** butonuna tıkla
-2. Build loglarını izle
-3. Container'ın başladığını doğrula
-
----
-
-## Adım 6: Logları Kontrol Et
-
-Başarılı başlangıç logları şöyle görünmeli:
+2. Build loglarını izle (2-3 dakika sürebilir)
+3. Başarılı logları bekle:
 
 ```
 INFO - Starting ICANN Downloader
@@ -100,86 +169,54 @@ INFO - Starting web server on port 8080
 
 ---
 
-## Adım 7: Web Arayüzünü Test Et
+## BÖLÜM 7: DOMAIN AYARLA (Opsiyonel)
 
-Tarayıcıda domain'e git:
-- `http://icann.senin-domainin.com`
+Eğer Traefik otomatik domain vermiyorsa:
 
-Dashboard'da şunları göreceksin:
-- Download durumu
-- Son indirmeler
-- Scheduler bilgisi
-- Manuel download butonu
-
----
-
-## Sorun Giderme
-
-### "Temporary failure in name resolution" Hatası
-
-**Sebep**: Container'lar farklı network'lerde
-
-**Çözüm**: 
-- Compose'da `networks` bölümünün doğru olduğundan emin ol
-- ClickHouse ve icann-downloader aynı network'te olmalı
-
-### "Database icann does not exist" Hatası
-
-**Sebep**: Eski kod versiyonu
-
-**Çözüm**: 
-- Dokploy'da "Rebuild" yap
-- En son kod database'i otomatik oluşturur
-
-### "CZDSClient.__init__() got an unexpected keyword argument" Hatası
-
-**Sebep**: Eski kod versiyonu
-
-**Çözüm**: 
-- Dokploy'da "Rebuild" yap
-
-### Nginx Proxy Manager Sayfası Görünüyor
-
-**Sebep**: Traefik routing yanlış
-
-**Çözüm**: 
-- `traefik.http.services.icann-downloader.loadbalancer.server.port=8080` label'ının olduğundan emin ol
-- Domain'in doğru yazıldığından emin ol
+1. icann-downloader service'ine git
+2. **"Domains"** sekmesine tıkla
+3. **"+ Add Domain"** tıkla
+4. Domain gir veya Traefik'in verdiği domain'i kullan
+5. **Port**: `8080`
+6. **"Save"** tıkla
 
 ---
 
-## Environment Variables Referansı
+## BÖLÜM 8: TEST ET
 
-| Değişken | Zorunlu | Varsayılan | Açıklama |
-|----------|---------|------------|----------|
-| `ICANN_USER` | ✅ | - | ICANN CZDS kullanıcı adı |
-| `ICANN_PASS` | ✅ | - | ICANN CZDS şifresi |
-| `DB_HOST` | ✅ | - | ClickHouse hostname |
-| `CLICKHOUSE_PASSWORD` | ❌ | `""` | ClickHouse şifresi |
-| `DB_PORT` | ❌ | `9000` | ClickHouse portu |
-| `DB_NAME` | ❌ | `icann` | Database adı |
-| `CRON_HOUR` | ❌ | `4` | Günlük download saati |
-| `CRON_MINUTE` | ❌ | `0` | Günlük download dakikası |
-| `PORT` | ❌ | `8080` | Web server portu |
+1. Tarayıcıda domain'e git
+2. Dashboard'u gör
+3. **"Start Download"** butonuyla manuel test yap
 
 ---
 
-## API Endpoints
+## SORUN GİDERME
 
-| Endpoint | Method | Açıklama |
-|----------|--------|----------|
-| `/` | GET | Dashboard |
-| `/api/status` | GET | Sistem durumu |
-| `/api/logs` | GET | Son download logları |
-| `/api/download/start` | POST | Manuel download başlat |
-| `/api/scheduler/status` | GET | Scheduler durumu |
+### Hata: "Temporary failure in name resolution"
+**Çözüm**: Network adı yanlış. Bölüm 3'ü tekrar kontrol et.
+
+### Hata: "Database icann does not exist"
+**Çözüm**: Rebuild yap. Yeni kod otomatik oluşturur.
+
+### Nginx Proxy Manager sayfası görünüyor
+**Çözüm**: Traefik label'larını kontrol et, port 8080 olmalı.
+
+### ClickHouse bağlantı hatası
+**Çözüm**: 
+- ClickHouse service'inin çalıştığından emin ol
+- Network adının doğru olduğundan emin ol
+- `DB_HOST=clickhouse` olmalı (service adı)
 
 ---
 
-## Cron Schedule
+## ÖZET
 
-Varsayılan olarak her gün saat **04:00**'da otomatik download başlar.
-
-Değiştirmek için:
-- `CRON_HOUR=4` → İstediğin saat (0-23)
-- `CRON_MINUTE=0` → İstediğin dakika (0-59)
+| Adım | İşlem |
+|------|-------|
+| 1 | Proje oluştur: `icann-zone-downloader` |
+| 2 | ClickHouse service oluştur |
+| 3 | ClickHouse network adını bul |
+| 4 | ICANN Downloader service oluştur |
+| 5 | Değişkenleri düzenle |
+| 6 | Deploy et |
+| 7 | Test et |
