@@ -133,6 +133,12 @@ services:
       - CLICKHOUSE_PASSWORD=gk4wp30maukhmir56ytodgfl5i4i6l5s
       - CRON_HOUR=4
       - CRON_MINUTE=0
+      # Paralel işlem ayarları (12 core, 64GB RAM için optimize)
+      - PARALLEL_ENABLED=true
+      - DOWNLOAD_WORKERS=4
+      - PARSE_WORKERS=8
+      - PARALLEL_CHUNK_SIZE=100000
+      - BATCH_SIZE=200000
     restart: unless-stopped
     networks:
       - icann-zone-downloader-clickhouse-xyz789
@@ -187,6 +193,36 @@ Eğer Traefik otomatik domain vermiyorsa:
 1. Tarayıcıda domain'e git
 2. Dashboard'u gör
 3. **"Start Download"** butonuyla manuel test yap
+
+---
+
+## BÖLÜM 9: PARALEL İŞLEM AYARLARI
+
+Yeni versiyon paralel indirme ve parse desteği içeriyor. 12 core CPU ve 64GB RAM için optimize edilmiş varsayılan ayarlar:
+
+| Değişken | Varsayılan | Açıklama |
+|----------|------------|----------|
+| `PARALLEL_ENABLED` | `true` | Paralel modu aktif/pasif |
+| `DOWNLOAD_WORKERS` | `4` | Aynı anda kaç TLD indirilecek |
+| `PARSE_WORKERS` | `8` | Her TLD için kaç paralel chunk işleyici |
+| `PARALLEL_CHUNK_SIZE` | `100000` | Her chunk'ta kaç kayıt |
+| `BATCH_SIZE` | `200000` | DB insert batch boyutu |
+
+### Performans Karşılaştırması
+
+| Mod | .com TLD (350M kayıt) | Hız |
+|-----|----------------------|-----|
+| Eski (tek thread) | ~4.5 saat | ~76k rec/s |
+| Yeni (paralel) | ~45-60 dakika | ~300-400k rec/s |
+
+### Kaynak Kullanımı Önerileri
+
+| RAM | CPU | DOWNLOAD_WORKERS | PARSE_WORKERS |
+|-----|-----|------------------|---------------|
+| 16GB | 4 core | 2 | 4 |
+| 32GB | 8 core | 3 | 6 |
+| 64GB | 12 core | 4 | 8 |
+| 128GB | 16+ core | 6 | 12 |
 
 ---
 

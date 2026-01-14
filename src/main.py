@@ -78,6 +78,15 @@ def create_services(config):
     def parser_factory(tld: str) -> ZoneParser:
         return ZoneParser(tld=tld)
     
+    # Create DB factory for parallel workers
+    def db_factory():
+        return ClickHouseRepository(
+            host=config.db_host,
+            password=config.clickhouse_password,
+            database=config.db_name,
+            port=config.db_port,
+        )
+    
     # Create download service
     download_service = DownloadService(
         czds_client=czds_client,
@@ -90,6 +99,12 @@ def create_services(config):
         chunk_delay=config.chunk_delay,
         large_file_threshold=config.large_file_threshold,
         gc_interval=config.gc_interval,
+        # Parallel processing
+        parallel_enabled=config.parallel_enabled,
+        download_workers=config.download_workers,
+        parse_workers=config.parse_workers,
+        parallel_chunk_size=config.parallel_chunk_size,
+        db_factory=db_factory,
     )
     
     # Create scheduler service

@@ -41,6 +41,12 @@ class Config:
     large_file_threshold: int = 5_000_000  # 5MB threshold for large file mode
     gc_interval: int = 10  # GC every 10 chunks
     
+    # Parallel processing settings
+    parallel_enabled: bool = True  # Enable parallel processing
+    download_workers: int = 4  # Parallel TLD downloads
+    parse_workers: int = 8  # Parallel chunk processors per TLD
+    parallel_chunk_size: int = 100000  # Chunk size for parallel mode
+    
     # Scheduler settings
     cron_hour: int = 4
     cron_minute: int = 0
@@ -112,6 +118,10 @@ class Config:
             chunk_delay=float(os.environ.get("CHUNK_DELAY", "0.1")),
             large_file_threshold=int(os.environ.get("LARGE_FILE_THRESHOLD", "100000000")),
             gc_interval=int(os.environ.get("GC_INTERVAL", "5")),
+            parallel_enabled=os.environ.get("PARALLEL_ENABLED", "true").lower() in ("true", "1", "yes"),
+            download_workers=int(os.environ.get("DOWNLOAD_WORKERS", "4")),
+            parse_workers=int(os.environ.get("PARSE_WORKERS", "8")),
+            parallel_chunk_size=int(os.environ.get("PARALLEL_CHUNK_SIZE", "100000")),
         )
     
     @staticmethod

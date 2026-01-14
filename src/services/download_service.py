@@ -5,7 +5,7 @@ import time
 import threading
 import logging
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Callable
 from dataclasses import dataclass
 
 from src.models import JobStatus, DownloadResult, DownloadLog, ZoneRecord
@@ -13,6 +13,7 @@ from src.services.czds_client import CZDSClient
 from src.services.zone_parser import ZoneParser
 from src.services.db_repository import ClickHouseRepository
 from src.services.logger_service import LoggerService
+from src.services.parallel_processor import ParallelDownloadService, ParallelConfig, ChunkProcessor
 
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,12 @@ class DownloadService:
         chunk_delay: float = 0.1,
         large_file_threshold: int = 100_000_000,
         gc_interval: int = 5,
+        # Parallel processing settings
+        parallel_enabled: bool = True,
+        download_workers: int = 4,
+        parse_workers: int = 8,
+        parallel_chunk_size: int = 100000,
+        db_factory: Optional[Callable] = None,
     ):
         """Initialize with dependencies.
         
@@ -71,6 +78,11 @@ class DownloadService:
             chunk_delay: Delay between chunks in seconds
             large_file_threshold: File size threshold for large file mode (bytes)
             gc_interval: Run GC every N chunks
+            parallel_enabled: Enable parallel processing
+            download_workers: Number of parallel TLD downloads
+            parse_workers: Number of parallel chunk processors
+            parallel_chunk_size: Chunk size for parallel mode
+            db_factory: Factory to create new DB connections for parallel workers
         """
         self.czds_client = czds_client
         self.parser_factory = parser_factory
@@ -83,11 +95,20 @@ class DownloadService:
         self.large_file_threshold = large_file_threshold
         self.gc_interval = gc_interval
         
+        # Parallel processing
+        self.parallel_enabled = parallel_enabled
+        self.download_workers = download_workers
+        self.parse_workers = parse_workers
+        self.parallel_chunk_size = parallel_chunk_size
+        self.db_factory = db_factory
+        
         self._job_status = JobStatus()
         self._lock = threading.Lock()
     
     def run_full_download(self) -> Optional[DownloadSummary]:
         """Execute full download cycle for all approved TLDs.
+        
+        Uses parallel processing if enabled and db_factory is provided.
         
         Returns:
             Summary with total files, records, duration, or None if job already running
@@ -106,15 +127,15 @@ class DownloadService:
         
         try:
             # Authenticate
-            self.logger_service.log("INFO", "Authenticating with CZDS API", operation_type="auth")
+            self.logger_service.log("INFO", "🔐 CZDS API ile kimlik doğrulanıyor...", operation_type="auth")
             self.czds_client.authenticate()
             
             # Get approved TLDs
-            self.logger_service.log("INFO", "Fetching approved TLDs", operation_type="download")
+            self.logger_service.log("INFO", "📋 Onaylı TLD listesi alınıyor...", operation_type="download")
             tlds = self.czds_client.get_approved_tlds()
             
             if not tlds:
-                self.logger_service.log("WARNING", "No approved TLDs found", operation_type="download")
+                self.logger_service.log("WARNING", "⚠️ Onaylı TLD bulunamadı", operation_type="download")
                 return DownloadSummary(
                     total_tlds=0,
                     successful_tlds=0,
@@ -129,56 +150,11 @@ class DownloadService:
             with self._lock:
                 self._job_status.start(len(tlds))
             
-            self.logger_service.log(
-                "INFO",
-                f"🚀 {len(tlds)} TLD için indirme başlıyor",
-                operation_type="download",
-            )
-            
-            # Process each TLD sequentially
-            successful = 0
-            failed = 0
-            total_records = 0
-            
-            for i, tld in enumerate(tlds):
-                result = self.download_single_tld(tld)
-                
-                if result.is_success:
-                    successful += 1
-                    total_records += result.records_count
-                else:
-                    failed += 1
-                
-                # Update progress
-                with self._lock:
-                    self._job_status.update_progress(i + 1, len(tlds), tld)
-            
-            # Complete job
-            with self._lock:
-                self._job_status.complete()
-            
-            end_time = datetime.now()
-            duration = int((end_time - start_time).total_seconds())
-            
-            summary = DownloadSummary(
-                total_tlds=len(tlds),
-                successful_tlds=successful,
-                failed_tlds=failed,
-                total_records=total_records,
-                total_duration=duration,
-                started_at=start_time,
-                completed_at=end_time,
-            )
-            
-            self.logger_service.log(
-                "INFO",
-                f"🎉 Tüm indirmeler tamamlandı: {successful}/{len(tlds)} TLD başarılı | {total_records:,} kayıt | {duration}s",
-                operation_type="download",
-                status="success",
-                duration=duration,
-            )
-            
-            return summary
+            # Check if parallel mode should be used
+            if self.parallel_enabled and self.db_factory:
+                return self._run_parallel_download(tlds, start_time)
+            else:
+                return self._run_sequential_download(tlds, start_time)
             
         except Exception as e:
             with self._lock:
@@ -190,6 +166,132 @@ class DownloadService:
                 operation_type="download",
             )
             raise
+    
+    def _run_parallel_download(self, tlds: List[str], start_time: datetime) -> DownloadSummary:
+        """Run downloads in parallel mode.
+        
+        Args:
+            tlds: List of TLDs to download
+            start_time: Job start time
+            
+        Returns:
+            Download summary
+        """
+        self.logger_service.log(
+            "INFO",
+            f"🚀 PARALEL MOD: {len(tlds)} TLD | {self.download_workers} indirme worker | {self.parse_workers} parse worker",
+            operation_type="download",
+        )
+        
+        # Create parallel config
+        config = ParallelConfig(
+            download_workers=self.download_workers,
+            parse_workers=self.parse_workers,
+            chunk_size=self.parallel_chunk_size,
+            batch_size=self.batch_size,
+        )
+        
+        # Create parallel service
+        parallel_service = ParallelDownloadService(
+            czds_client=self.czds_client,
+            db_factory=self.db_factory,
+            logger_service=self.logger_service,
+            temp_dir=self.temp_dir,
+            config=config,
+        )
+        
+        # Run parallel downloads
+        results = parallel_service.download_tlds_parallel(tlds)
+        
+        # Complete job
+        with self._lock:
+            self._job_status.complete()
+        
+        end_time = datetime.now()
+        duration = int((end_time - start_time).total_seconds())
+        
+        summary = DownloadSummary(
+            total_tlds=results["total"],
+            successful_tlds=results["successful"],
+            failed_tlds=results["failed"],
+            total_records=results["total_records"],
+            total_duration=duration,
+            started_at=start_time,
+            completed_at=end_time,
+        )
+        
+        self.logger_service.log(
+            "INFO",
+            f"🎉 PARALEL İNDİRME TAMAMLANDI: {results['successful']}/{results['total']} TLD | "
+            f"{results['total_records']:,} kayıt | {duration}s | "
+            f"{results['total_records']/duration:,.0f} rec/s",
+            operation_type="download",
+            status="success",
+            duration=duration,
+        )
+        
+        return summary
+    
+    def _run_sequential_download(self, tlds: List[str], start_time: datetime) -> DownloadSummary:
+        """Run downloads sequentially (original mode).
+        
+        Args:
+            tlds: List of TLDs to download
+            start_time: Job start time
+            
+        Returns:
+            Download summary
+        """
+        self.logger_service.log(
+            "INFO",
+            f"🚀 {len(tlds)} TLD için sıralı indirme başlıyor",
+            operation_type="download",
+        )
+        
+        # Process each TLD sequentially
+        successful = 0
+        failed = 0
+        total_records = 0
+        
+        for i, tld in enumerate(tlds):
+            result = self.download_single_tld(tld)
+            
+            if result.is_success:
+                successful += 1
+                total_records += result.records_count
+            else:
+                failed += 1
+            
+            # Update progress
+            with self._lock:
+                self._job_status.update_progress(i + 1, len(tlds), tld)
+        
+        # Complete job
+        with self._lock:
+            self._job_status.complete()
+        
+        end_time = datetime.now()
+        duration = int((end_time - start_time).total_seconds())
+        
+        summary = DownloadSummary(
+            total_tlds=len(tlds),
+            successful_tlds=successful,
+            failed_tlds=failed,
+            total_records=total_records,
+            total_duration=duration,
+            started_at=start_time,
+            completed_at=end_time,
+        )
+        
+        self.logger_service.log(
+            "INFO",
+            f"🎉 Tüm indirmeler tamamlandı: {successful}/{len(tlds)} TLD başarılı | {total_records:,} kayıt | {duration}s",
+            operation_type="download",
+            status="success",
+            duration=duration,
+        )
+        
+        return summary
     
     def download_single_tld(self, tld: str) -> DownloadResult:
         """Download and process single TLD.
