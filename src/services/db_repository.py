@@ -44,7 +44,6 @@ class ClickHouseRepository:
                     'min_insert_block_size_rows': 100000,
                     'max_threads': 8,  # Use more threads
                 },
-                compression=True,  # Enable compression
             )
         return self._client
     
