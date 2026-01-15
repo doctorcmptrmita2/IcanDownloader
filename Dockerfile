@@ -17,6 +17,9 @@ COPY templates/ ./templates/
 # Create temp directory for zone files
 RUN mkdir -p /app/temp
 
+# Build version - change to force rebuild
+ENV BUILD_VERSION="2026-01-16-v2"
+
 # Environment variables (defaults)
 ENV ICANN_USER=""
 ENV ICANN_PASS=""
