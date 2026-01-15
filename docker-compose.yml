@@ -13,8 +13,6 @@ services:
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-gk4wp30maukhmir56ytodgfl5i4i6l5s}
       - CRON_HOUR=4
       - CRON_MINUTE=0
-    ports:
-      - "8080:8080"
     restart: unless-stopped
     networks:
       - icannzonedownloader-clickhouse-cfjyf1_default
