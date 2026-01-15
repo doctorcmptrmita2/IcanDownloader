@@ -17,7 +17,7 @@ services:
       - "8080:8080"
     restart: unless-stopped
     networks:
-      - domainengine-clickhouse-jbnfph
+      - icannzonedownloader-clickhouse-cfjyf1_default
     labels:
       - traefik.enable=true
       - traefik.http.routers.icann-downloader.rule=Host(`${DOMAIN:-icann.example.com}`)
@@ -31,5 +31,5 @@ services:
       start_period: 40s
 
 networks:
-  domainengine-clickhouse-jbnfph:
+  icannzonedownloader-clickhouse-cfjyf1_default:
     external: true
