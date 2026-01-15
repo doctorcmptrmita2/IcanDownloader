@@ -677,38 +677,44 @@ class ClickHouseRepository:
         """
         client = self._get_read_client()
         try:
-            # Count total dropped
+            # Count total dropped using LEFT JOIN (faster than NOT IN)
             count_result = client.execute(
                 """
-                SELECT count(DISTINCT domain_name)
-                FROM zone_records
-                WHERE tld = %(tld)s
-                  AND download_date = %(old_date)s
-                  AND domain_name NOT IN (
-                      SELECT DISTINCT domain_name
-                      FROM zone_records
-                      WHERE tld = %(tld)s
-                        AND download_date = %(new_date)s
-                  )
+                SELECT count()
+                FROM (
+                    SELECT DISTINCT domain_name
+                    FROM zone_records
+                    WHERE tld = %(tld)s AND download_date = %(old_date)s
+                ) AS old_domains
+                LEFT JOIN (
+                    SELECT DISTINCT domain_name
+                    FROM zone_records
+                    WHERE tld = %(tld)s AND download_date = %(new_date)s
+                ) AS new_domains
+                ON old_domains.domain_name = new_domains.domain_name
+                WHERE new_domains.domain_name IS NULL
                 """,
                 {"tld": tld, "old_date": old_date, "new_date": new_date}
             )
             total = count_result[0][0] if count_result else 0
             
-            # Get dropped domains
+            # Get dropped domains using LEFT JOIN
             result = client.execute(
                 """
-                SELECT DISTINCT domain_name
-                FROM zone_records
-                WHERE tld = %(tld)s
-                  AND download_date = %(old_date)s
-                  AND domain_name NOT IN (
-                      SELECT DISTINCT domain_name
-                      FROM zone_records
-                      WHERE tld = %(tld)s
-                        AND download_date = %(new_date)s
-                  )
-                ORDER BY domain_name
+                SELECT old_domains.domain_name
+                FROM (
+                    SELECT DISTINCT domain_name
+                    FROM zone_records
+                    WHERE tld = %(tld)s AND download_date = %(old_date)s
+                ) AS old_domains
+                LEFT JOIN (
+                    SELECT DISTINCT domain_name
+                    FROM zone_records
+                    WHERE tld = %(tld)s AND download_date = %(new_date)s
+                ) AS new_domains
+                ON old_domains.domain_name = new_domains.domain_name
+                WHERE new_domains.domain_name IS NULL
+                ORDER BY old_domains.domain_name
                 LIMIT %(limit)s OFFSET %(offset)s
                 """,
                 {"tld": tld, "old_date": old_date, "new_date": new_date, "limit": limit, "offset": offset}
@@ -745,38 +751,44 @@ class ClickHouseRepository:
         """
         client = self._get_read_client()
         try:
-            # Count total new
+            # Count total new using LEFT JOIN (faster than NOT IN)
             count_result = client.execute(
                 """
-                SELECT count(DISTINCT domain_name)
-                FROM zone_records
-                WHERE tld = %(tld)s
-                  AND download_date = %(new_date)s
-                  AND domain_name NOT IN (
-                      SELECT DISTINCT domain_name
-                      FROM zone_records
-                      WHERE tld = %(tld)s
-                        AND download_date = %(old_date)s
-                  )
+                SELECT count()
+                FROM (
+                    SELECT DISTINCT domain_name
+                    FROM zone_records
+                    WHERE tld = %(tld)s AND download_date = %(new_date)s
+                ) AS new_domains
+                LEFT JOIN (
+                    SELECT DISTINCT domain_name
+                    FROM zone_records
+                    WHERE tld = %(tld)s AND download_date = %(old_date)s
+                ) AS old_domains
+                ON new_domains.domain_name = old_domains.domain_name
+                WHERE old_domains.domain_name IS NULL
                 """,
                 {"tld": tld, "old_date": old_date, "new_date": new_date}
             )
             total = count_result[0][0] if count_result else 0
             
-            # Get new domains
+            # Get new domains using LEFT JOIN
             result = client.execute(
                 """
-                SELECT DISTINCT domain_name
-                FROM zone_records
-                WHERE tld = %(tld)s
-                  AND download_date = %(new_date)s
-                  AND domain_name NOT IN (
-                      SELECT DISTINCT domain_name
-                      FROM zone_records
-                      WHERE tld = %(tld)s
-                        AND download_date = %(old_date)s
-                  )
-                ORDER BY domain_name
+                SELECT new_domains.domain_name
+                FROM (
+                    SELECT DISTINCT domain_name
+                    FROM zone_records
+                    WHERE tld = %(tld)s AND download_date = %(new_date)s
+                ) AS new_domains
+                LEFT JOIN (
+                    SELECT DISTINCT domain_name
+                    FROM zone_records
+                    WHERE tld = %(tld)s AND download_date = %(old_date)s
+                ) AS old_domains
+                ON new_domains.domain_name = old_domains.domain_name
+                WHERE old_domains.domain_name IS NULL
+                ORDER BY new_domains.domain_name
                 LIMIT %(limit)s OFFSET %(offset)s
                 """,
                 {"tld": tld, "old_date": old_date, "new_date": new_date, "limit": limit, "offset": offset}
